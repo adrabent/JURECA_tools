@@ -5,7 +5,7 @@
 Surveys KSP monitoring script -- more details available later
 """
 
-import os, sys, glob
+import os, sys
 import logging
 import resource
 import optparse
@@ -20,6 +20,10 @@ from GRID_LRT.Staging import srmlist
 
 _version = '0.1beta'
 observation = 'test_L556782'
+software_version = 'env_lofar_2.20.2_stage2017b.sh'
+nodes = 1
+walltime = '01:00:00'
+mail = 'alex@tls-tautenburg.de'
 
 os.system('clear')
 print '\033[30;1m################################################'
@@ -69,7 +73,14 @@ def set_token_status(tokens, token_value, status):
 	tokens.db.update([token])
 	logging.info('Status of token \033[35m' + token_value + '\033[32m has been set to \033[35m' + status + '\033[32m.')
 	pass
-      
+
+def token_status(tokens, token_value):
+	
+	token = tokens.db[token_value]
+	status = token['status']
+	return status
+	pass
+	
 def set_token_output(tokens, token_value, output):
 	
 	token = tokens.db[token_value]
@@ -78,35 +89,50 @@ def set_token_output(tokens, token_value, output):
 	logging.info('Output of token \033[35m' + token_value + '\033[32m has been set to \033[35m' + str(output) + '\033[32m.')
 	pass
 
+def token_output(tokens, token_value):
+	
+	token = tokens.db[token_value]
+	output = token['output']
+	return output
+	pass
 
-def unpack_data(tokens, token_value, working_directory):
+def is_staged(url):
+	if 'ONLINE_AND_NEARLINE' in subprocess.check_output(['srmls', '-l', url]):
+		return True
+		pass
+	else:
+		return False
+		pass
+	pass
+
+def is_running(lock_file):
+	if os.path.isfile(lock_file):
+		return True
+		pass
+	else:
+		return False
+		pass
+	pass
+
+def unpack_data(tokens, token_value, filename, working_directory):
   
 	token = tokens.db[token_value]
 	observation_id = token['OBSID']
-	unpack_filename = glob.glob(working_directory + '/*' + observation_id + '*.tar')
 
-	if len(unpack_filename) > 1:
-		logging.warning('\033[33m Detected duplicate files with the same token. Will unpack only one.')
-		pass
 	set_token_status(tokens, token_value, 'unpacking')
 	
-	try:
-		os.chdir(working_directory)
-		unpack = subprocess.Popen(['tar','xfv',unpack_filename[0]], stdout=subprocess.PIPE)
-		errorcode = unpack.wait()
-		if errorcode == 0:
-			set_token_status(tokens, token_value, 'unpacked')
-			os.remove(unpack_filename[0])
-			logging.info('File \033[35m' + unpack_filename[0] + '\033[32m was removed.')
-			pass
-		else:
-			set_token_status(tokens, token_value, 'unpacking failed, error code: ' + str(int(errorcode)))
-			pass
+	os.chdir(working_directory)
+	unpack = subprocess.Popen(['tar', 'xfv', filename, '-C', working_directory], stdout=subprocess.PIPE)
+	errorcode = unpack.wait()
+	if errorcode == 0:
+		set_token_status(tokens, token_value, 'unpacked')
+		os.remove(filename)
+		logging.info('File \033[35m' + filename + '\033[32m was removed.')
 		pass
-	except (OSError) as exception:
-		logging.error('\033[31mException raised: ' + str(exception))
-		logging.warning('\031[31mUnpacking failed')
-		set_token_status(tokens, item['value'], 'unpacking failed, exception raised: ' + str(exception))
+	else:
+		logging.error('\033[31mUnpacking failed, error code: ' + str(errorcode))
+		set_token_status(tokens, token_value, 'error')
+		set_token_output(tokens, item['value'], 20)
 		pass
 	pass
 
@@ -116,99 +142,225 @@ def download_data(tokens, list_todos, working_directory):
 	for item in list_todos:
 		lock_token(tokens, item['value'])
 		srm = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
-		download_list.append(srm)
+		if not is_staged(srm):
+			logging.warning('\033[33mFile \033[35m' + srm + '\033[33m has not been staged.')
+			set_token_status(tokens, item['value'], 'error')
+			set_token_output(tokens, item['value'], 20)
+			continue
+			pass
+		logging.info('File \033[35m' + srm + '\033[32m is properly staged.')
+		status = token_status(tokens, item['value'])
+		if status == 'unpacked' or  status == 'downloaded' or status == 'unpacking' or status == 'downloading':
+			logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already \033[35m' + status)
+			pass
+		else:
+			download_list.append(srm)
+			pass
 		pass
 	
-	#gsilist = download_list.gsi_links() # convert the srm list to a GSI list (proper URLs for GRID download)
-	httplist = download_list.http_links()
-	httplist = list(reversed(list(httplist))) # to re-reverse the list in order to match it for the upcoming loop
-	#for item in gsilist:
-	for url,item in zip(httplist,list_todos):
+	
+	gsilist = download_list.gsi_links() # convert the srm list to a GSI list (proper URLs for GRID download)
+	gsilist = list(reversed(list(gsilist))) # to re-reverse the list in order to match it for the upcoming loop
+	for url,item in zip(gsilist, list_todos):
 		set_token_status(tokens, item['value'], 'downloading')
-		#download = subprocess.Popen(['globus-url-copy', item, '$WORK'])
-		try:
-			download = subprocess.Popen(['wget','-P',working_directory,url], stdout=subprocess.PIPE, shell=False)
-			#(out, err) =  download.communicate()
-			#logging.info(out)
-			errorcode = download.wait()
-			if errorcode == 0:
-				set_token_status(tokens, item['value'], 'downloaded')
-				set_token_output(tokens, item['value'], 0)
-				unpack_data(tokens, item['value'], working_directory)
-				pass
-			else:
-				set_token_status(tokens, item['value'], 'download failed, error code: ' + str(int(errorcode)))
-				set_token_output(tokens, item['value'], 20)
-				pass
-
+		filename = working_directory + '/' + url.split('/')[-1]
+		download = subprocess.Popen(['globus-url-copy', url, 'file:' + filename], stdout=subprocess.PIPE)
+		#print 'globus-url-copy', url, filename
+		#(out, err) =  download.communicate()
+		#logging.info(out)
+		errorcode = download.wait()
+		if errorcode == 0:
+			set_token_status(tokens, item['value'], 'downloaded')
+			set_token_output(tokens, item['value'], 0)
+			unpack_data(tokens, item['value'], filename, working_directory)
 			pass
-		except (OSError) as exception:
-			logging.error('\033[31mException raised: ' + str(exception))
-			logging.warning('\033[31mDownload failed')
-			set_token_status(tokens, item['value'], 'download failed, exception raised: ' + str(exception))
+		else:
+			logging.error('Download failed, error code: ' + str(int(errorcode)))
+			set_token_status(tokens, item['value'], 'error')
+			set_token_output(tokens, item['value'], 20)
 			pass
 		pass
 	return 0
 	pass
    
-def run_prefactor(tokens, list_todos, working_directory, ftp):
-  
-	logging.info('Downloading current prefactor version from \033[35m' + ftp)
-	download = subprocess.Popen(['curl', ftp, '--output', working_directory + '/prefactor.tar'], stdout=subprocess.PIPE, shell=False)
-	errorcode = download.wait()
-	if errorcode != 0:
-		set_token_status(tokens, item['value'], 'download of prefactor failed, error code: ' + str(int(errorcode)))
-		logging.error('\033[31m Downloading prefactor has failed. Programm will be terminated.')
-		for item in list_todos: 
-			set_token_output(tokens, item['value'], -1)
-			pass
-		raise RuntimeError('Downloading prefactor has failed.')
+def create_submission_script(submit_job, parset, working_directory, submitted):
+	
+	home_directory = os.environ['HOME']
+	
+	if os.path.isfile(submit_job):
+		logging.warning('\033[33mFile for submission already exists. It will be overwritten.')
+		os.remove(submit_job)
+		pass
+	
+	jobfile = open(submit_job, 'w')
+	
+	## writing file header
+	jobfile.write('#!/usr/bin/env sh\n')
+	#jobfile.write('. ' + home_directory + '/' + software_version + '\n')
+	
+	## extracting directories for IONEX and the TGSS ADR skymodel
+	try:
+		IONEX_script         = os.popen('find ' + working_directory + ' | grep download_IONEX.py').readlines()[0].rstrip('\n').replace(' ','')
+		IONEX_path           = os.popen('grep ionex_path '           + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		file.write(IONEX_script + ' --destination ' + IONEX_path + ' ' + working_directory + '/' + target_input_pattern)
+		pass
+	except IndexError:
 		pass
 	try:
-		logging.info('Unpacking current prefactor version to \033[35m' + working_directory)
-		os.chdir(working_directory)
-		unpack = subprocess.Popen(['tar','xfv','prefactor.tar'])
-		errorcode = unpack.wait()
-		if errorcode != 0:
-			for item in list_todos:
-				set_token_status(tokens, item['value'], 'unpacking of prefactor failed, error code: ' + str(int(errorcode)))
-				set_token_output(tokens, item['value'], -1)
-				pass
-			logging.error('\033[31m Unpacking prefactor has failed. Programm will be terminated.')
-			raise RuntimeError('Unpacking prefactor has failed.')
-			pass
-	except (OSError) as exception:
-		logging.error('\033[31mException raised: ' + str(exception))
-		logging.warning('\033[31mUnpacking of prefactor failed')
-		for item in list_todos:
-			set_token_status(tokens, item['value'], 'unpacking of prefactor failed, exception raised: ' + str(exception))
-			set_token_output(tokens, item['value'], -1)
-			pass
+		skymodel_script      = os.popen('find ' + working_directory + ' | grep download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
+		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		file.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel)
 		pass
+	except IndexError:
+		pass
+	
+	## write-up of final command
+	jobfile.write('\n')
+	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' ' + home_directory + '/run_pipeline.sh ' + parset + ' ' + working_directory)
+	jobfile.close()
+	
+	os.system('chmod +x ' + submit_job)
+	os.rename(submit_job, submit_job + '.sh')
+	subprocess.Popen(['touch', submitted])
+	
+	return 0
+	pass
+   
+   
+def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted):
+  
+	parset     = working_directory + '/pipeline.parset'
+	parset2    = working_directory + '/pipeline2.parset'
+	submit_job = working_directory + '/submit_job'
+	
 	logging.info('Getting pipeline parset file for \033[35m' + observation)
-	for item in list_todos:
-  		if os.path.isfile('pipeline.parset'):
-			tokens.get_attachment(item['value'],'Pre-Facet-Calibrator-1.parset','__pipeline__.parset')
-			if not filecmp.cmp('pipeline.parset', '__pipeline__.parset'):
-				logging.error('\033[31mParset file mismatches for: \033[35m' + item['value'])
-				set_token_status(tokens, item['value'], 'parset file mismatch')
+	for item in list_pipeline:
+		attachments = tokens.list_attachments(item['value'])
+		parsets = [i for i in attachments if 'parset' in i]
+		if len(parsets) != 1:
+				logging.error('\033[31mMultiple or no parsets attached to: \033[35m' + item['value'])
+				set_token_status(tokens, item['value'], 'Multiple or no parsets attached')
 				set_token_output(tokens, item['value'], -1)
 				pass
-			os.remove('__pipeline__.parset')
+  		if os.path.isfile(parset):
+			tokens.get_attachment(item['value'],parsets[0],parset2)
+			if not filecmp.cmp(parset, parset2):
+				logging.error('\033[31mParset file mismatches for: \033[35m' + item['value'])
+				set_token_status(tokens, item['value'], 'Parset files mismatch')
+				set_token_output(tokens, item['value'], -1)
+				return 1
+				pass
+			os.remove(parset2)
 			pass
 		else:
-			tokens.get_attachment(item['value'],'Pre-Facet-Calibrator-1.parset','pipeline.parset')
+			tokens.get_attachment(item['value'],parsets[0],parset)
 			pass
 		pass
-	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$PREFACTOR_SCRATCH_DIR/g" pipeline.parset')
+	
+	## applying necessary changes to the parset
+	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/' + working_directory + '/g" ' + parset)
+      
+	logging.info('Downloading current prefactor version from \033[35m' + ftp)
+	filename = working_directory + '/prefactor.tar'
+	download = subprocess.Popen(['curl', ftp, '--output', filename], stdout=subprocess.PIPE)
+	errorcode = download.wait()
+	if errorcode != 0:
+		logging.error('\033[31m Downloading prefactor has failed.')
+		for item in list_pipeline: 
+			set_token_status(tokens, item['value'], 'download of prefactor failed, error code: ' + str(int(errorcode)))
+			set_token_output(tokens, item['value'], -1)
+			return 1
+			pass
+		pass
+	      
+	logging.info('Unpacking current prefactor version to \033[35m' + working_directory)
+	unpack = subprocess.Popen(['tar', 'xfv', filename, '-C', working_directory])
+	errorcode = unpack.wait()
+	if errorcode != 0:
+		for item in list_pipeline:
+			set_token_status(tokens, item['value'], 'unpacking of prefactor failed, error code: ' + str(int(errorcode)))
+			set_token_output(tokens, item['value'], -1)
+			pass
+		logging.error('\033[31m Unpacking prefactor has failed.')
+		return 1
+		pass
+	
+	logging.info('Creating submission script in \033[35m' + submit_job)
+	create_submission_script(submit_job, parset, working_directory, submitted)
+	logging.info('\033[0mWaiting for submission\033[0;5m...')
+	while os.path.exists(submit_job):
+		time.sleep(5)
+		pass
+	for item in list_pipeline:
+		set_token_status(tokens, item['value'], 'submitted')
+		set_token_output(tokens, item['value'], 0)
+		pass
+	logging.info('Pipeline has been submitted.')
+	
+	return 0
+	pass
+	
+
+def get_pipelines(tokens, list_locked):
+	
+	pipelines = []
+	
+	for item in list_locked:
+		token = tokens.db[item['value']]
+		pipeline = token['PIPELINE']
+		if pipeline not in pipelines:
+			pipelines.append(pipeline)
+			pass
+		pass
+      
+	return pipelines
+	pass
+	
+def pipeline_status(tokens, list_pipeline):
+	
+	status = []
+	for item in list_pipeline:
+		status.append(token_status(tokens, item['value']))
+		pass
+	status = list(set(status))
+	
+	return status
 	pass
 
+def pipeline_output(tokens, list_pipeline):
+	
+	output = []
+	for item in list_pipeline:
+		output.append(token_output(tokens, item['value']))
+		pass
+	output = list(set(output))
+	
+	return output
+	pass
+      
 def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.leidenuniv.nl/pub/apmechev/sandbox/SKSP/prefactor/pref_cal1.tar'):
 	
 	## load working environment
 	working_directory = os.environ['WORK']
+	lock_file         = working_directory + '/.lock'
+	submitted         = working_directory + '/.submitted'
 	logging.info('\033[0mWorking directory is ' + working_directory)
 	
+	## check whether an instance of this program is already running
+	if is_running(lock_file):
+		logging.error('\033[31mAn instance of this program appears to be still running. If not, please remove the lock file: \033[0m' + lock_file)
+		return 1
+		pass
+	elif is_running(submitted): 
+		logging.info('\033[0mAnother pipeline has already been submitted.')
+		return 0
+		pass
+	else:
+		subprocess.Popen(['touch', lock_file])
+		pass
+	      
 	## load PiCaS credentials
 	logging.info('\033[0mConnecting to server: ' + server)
 	pc = picas_cred()
@@ -216,20 +368,85 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 	logging.info('Username: \033[35m' + pc.user)
 	logging.info('Database: \033[35m' + pc.database)
 	
-	tokens        = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
-	tokens.reset_tokens('done')
-	tokens.reset_tokens('locked')
-	list_todos    = tokens.list_tokens_from_view('todo') # check which tokens of certain type are in the todo state
+	tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
+	#tokens.reset_tokens('done')
+	#tokens.reset_tokens('locked')
 	
-	if len(list_todos) == 0:
-		logging.info('\033[0mNo tokens found in database to be processed.')
-		return None
+	## check for new data sets
+	list_todos     = tokens.list_tokens_from_view('todo')   # check which tokens of certain type are in the todo state
+	if len(list_todos) > 0:
+		download_data(tokens, list_todos, working_directory)
 		pass
 	
-	#download_data(tokens, list_todos, working_directory)
-	run_prefactor(tokens, list_todos, working_directory, ftp)
-
+	## get information about other tokens present
+	list_locked = tokens.list_tokens_from_view('locked') # check which tokens of certain type are in the locked state
+	list_error  = tokens.list_tokens_from_view('error')  # check which tokens of certain type show errors
+	list_done   = tokens.list_tokens_from_view('done')   # check which tokens of certain type are done
 	
+	## check which pipelines are locked, done or show errors
+	locked_pipelines = get_pipelines(tokens, list_locked)
+	bad_pipelines    = get_pipelines(tokens, list_error)
+	pipelines_done   = get_pipelines(tokens, list_done)
+	if len(bad_pipelines) != 0:
+		logging.error('\033[31mPipeline(s) \033[35m' + str(bad_pipelines) + '\033[31m show errors. Please check their token status. Script will proceed without them.')
+		pass
+	if len(pipelines_done) !=0:
+		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m for this observation are done.')
+		pass
+
+	## check which pipelines need further processing with prefactor
+	pipelines = list(set(locked_pipelines) - set(bad_pipelines) - set(pipelines_done))
+	if len(pipelines) == 0:
+		logging.info('\033[0mNo tokens found in database to be processed.')
+		pass
+	else:
+		for pipeline in pipelines:
+			if is_running(submitted): 
+				logging.info('\033[0mWaiting for pipeline to be finished.')
+				os.remove(lock_file)
+				return 0
+				pass
+			list_pipeline = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
+			status = pipeline_status(tokens, list_pipeline)
+			output = pipeline_output(tokens, list_pipeline)
+			if len(status) > 1:
+				logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m shows more than one status: \033[35m' + str(status) + '\033[33m. Script will proceed without it.')
+				continue
+				pass
+			elif status[0] == 'todo':
+				logging.warning('\033[33mAll data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available. Check missing files.')
+				continue
+				pass
+			elif status[0] == 'submitted':
+				logging.info('Pipeline \033[35m' + pipeline + '\033[32m has already been submitted.')
+				for item in list_pipeline:
+					set_token_status(tokens, item['value'], 'unpacked')
+					set_token_output(tokens, item['value'], 0)
+					pass
+				continue
+				pass
+			elif status[0] == 'processing':
+				logging.info('Pipeline \033[35m' + pipeline + '\033[32m is currently processed.')
+				continue
+				pass
+			elif status[0] == 'unpacked':
+				logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
+				run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted)
+				pass
+			elif -1 in output:
+				logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be resumed.')
+				run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted)
+				pass      
+			else:
+				logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m has an invalid status. Script will proceed without it.')
+				pass
+			pass
+		pass
+	
+	## remove the lock file
+	os.remove(lock_file)
+	
+	return 0
 	pass
 
 if __name__=='__main__':
