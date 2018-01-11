@@ -9,6 +9,7 @@ import os, sys
 import logging
 import resource
 import optparse
+import glob
 
 import time, datetime
 import subprocess
@@ -229,11 +230,18 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	pass
    
    
-def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted):
+def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slurm_files):
   
 	parset     = working_directory + '/pipeline.parset'
 	parset2    = working_directory + '/pipeline2.parset'
 	submit_job = working_directory + '/submit_job'
+	
+	if os.path.isfile(parset):
+		os.remove(parset)
+		pass
+	if os.path.isfile(parset2):
+		os.remove(parset2)
+		pass
 	
 	logging.info('Getting pipeline parset file for \033[35m' + observation)
 	for item in list_pipeline:
@@ -245,7 +253,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted):
 				set_token_output(tokens, item['value'], -1)
 				pass
   		if os.path.isfile(parset):
-			tokens.get_attachment(item['value'],parsets[0],parset2)
+			tokens.get_attachment(item['value'], parsets[0], parset2)
 			if not filecmp.cmp(parset, parset2):
 				logging.error('\033[31mParset file mismatches for: \033[35m' + item['value'])
 				set_token_status(tokens, item['value'], 'Parset files mismatch')
@@ -255,13 +263,21 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted):
 			os.remove(parset2)
 			pass
 		else:
-			tokens.get_attachment(item['value'],parsets[0],parset)
+			tokens.get_attachment(item['value'], parsets[0], parset)
 			pass
 		pass
 	
 	## applying necessary changes to the parset
-	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/' + working_directory + '/g" ' + parset)
-      
+	num_proc_per_node       = os.popen('grep "! num_proc_per_node"').readlines()[0].rstrip('\n').replace(' ','')
+	num_proc_per_node_limit = os.popen('grep "! num_proc_per_node_limit"').readlines()[0].rstrip('\n').replace(' ','')
+	max_dppp_threads        = os.popen('grep "! max_dppp_threads"').readlines()[0].rstrip('\n').replace(' ','')
+	
+	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = input.output.max_per_node/g" ' + parset)
+	os.system('sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit = 10/g" '                        + parset)
+	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = 10/g" '                        + parset)
+	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$WORK/g" ' + parset)
+	
+	## downloading prefactor
 	logging.info('Downloading current prefactor version from \033[35m' + ftp)
 	filename = working_directory + '/prefactor.tar'
 	download = subprocess.Popen(['curl', ftp, '--output', filename], stdout=subprocess.PIPE)
@@ -289,8 +305,14 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted):
 	
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script(submit_job, parset, working_directory, submitted)
+	
+	slurm_list = glob.glob(slurm_files)
+	if len(slurm_list) > 0:
+		os.remove(slurm_list[-1])
+		pass
+
 	logging.info('\033[0mWaiting for submission\033[0;5m...')
-	while os.path.exists(submit_job):
+	while os.path.exists(submit_job + '.sh'):
 		time.sleep(5)
 		pass
 	for item in list_pipeline:
@@ -339,6 +361,18 @@ def pipeline_output(tokens, list_pipeline):
 	
 	return output
 	pass
+
+def check_submitted_job(slurm_log, submitted):
+	  
+	log_information = os.popen('tail -9 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'ERROR' in log_information:
+		logging.warning(log_information)
+		os.remove(submitted)
+		return log_information
+		pass
+	
+	return 'processing'
+	pass
       
 def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.leidenuniv.nl/pub/apmechev/sandbox/SKSP/prefactor/pref_cal1.tar'):
 	
@@ -346,6 +380,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 	working_directory = os.environ['WORK']
 	lock_file         = working_directory + '/.lock'
 	submitted         = working_directory + '/.submitted'
+	slurm_files       = 'slurm-*.out'
+	log_information   = ''
 	logging.info('\033[0mWorking directory is ' + working_directory)
 	
 	## check whether an instance of this program is already running
@@ -355,11 +391,19 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 		pass
 	elif is_running(submitted): 
 		logging.info('\033[0mAnother pipeline has already been submitted.')
-		return 0
+		slurm_list = glob.glob(slurm_files)
+		if len(slurm_list) > 0:
+			slurm_log = slurm_list[-1]
+			job_id = os.path.basename(slurm_log).lstrip('slurm-').rstrip('.out')
+			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
+			log_information = check_submitted_job(slurm_log, submitted)
+			pass
+		else:
+			return 0
+			pass
 		pass
-	else:
-		subprocess.Popen(['touch', lock_file])
-		pass
+	      
+	subprocess.Popen(['touch', lock_file])
 	      
 	## load PiCaS credentials
 	logging.info('\033[0mConnecting to server: ' + server)
@@ -389,6 +433,11 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 	pipelines_done   = get_pipelines(tokens, list_done)
 	if len(bad_pipelines) != 0:
 		logging.error('\033[31mPipeline(s) \033[35m' + str(bad_pipelines) + '\033[31m show errors. Please check their token status. Script will proceed without them.')
+		list_bad_pipeline = tokens.list_tokens_from_view(bad_pipelines[0])
+		for item in list_bad_pipeline:
+			set_token_status(tokens, item['value'], 'unpacked')
+			set_token_output(tokens, item['value'], 0)
+			pass
 		pass
 	if len(pipelines_done) !=0:
 		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m for this observation are done.')
@@ -401,11 +450,11 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 		pass
 	else:
 		for pipeline in pipelines:
-			if is_running(submitted): 
-				logging.info('\033[0mWaiting for pipeline to be finished.')
-				os.remove(lock_file)
-				return 0
-				pass
+			#if is_running(submitted): 
+				#logging.info('\033[0mWaiting for pipeline to be finished.')
+				#os.remove(lock_file)
+				#return 0
+				#pass
 			list_pipeline = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
 			status = pipeline_status(tokens, list_pipeline)
 			output = pipeline_output(tokens, list_pipeline)
@@ -420,8 +469,21 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 			elif status[0] == 'submitted':
 				logging.info('Pipeline \033[35m' + pipeline + '\033[32m has already been submitted.')
 				for item in list_pipeline:
-					set_token_status(tokens, item['value'], 'unpacked')
-					set_token_output(tokens, item['value'], 0)
+					if log_information == 'processing':
+					  	set_token_status(tokens, item['value'], 'processing')
+						set_token_output(tokens, item['value'], 0)
+						pass
+					elif log_information != '':
+						attachments = tokens.list_attachments(item['value'])
+						old_slurm_logs = [i for i in attachments if 'slurm' in i]
+						doc = tokens.db[item['value']]
+						for old_slurm_log in old_slurm_logs:
+							tokens.db.delete_attachment(doc, old_slurm_log)
+							pass
+						tokens.add_attachment(item['value'], open(slurm_log,'r'), os.path.basename(slurm_log))
+						set_token_status(tokens, item['value'], 'error')
+						set_token_output(tokens, item['value'], log_information[log_information.find('genericpipeline:'):])
+						pass
 					pass
 				continue
 				pass
@@ -431,7 +493,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='ftp://ftp.strw.lei
 				pass
 			elif status[0] == 'unpacked':
 				logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
-				run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted)
+				run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slurm_files)
 				pass
 			elif -1 in output:
 				logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be resumed.')
