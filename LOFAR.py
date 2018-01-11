@@ -57,11 +57,14 @@ def create_pipeline_config(working_directory):
 		default_wcsroot     = os.popen('grep wcsroot            ' + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_pythonpath  = os.popen('grep pythonpath         ' + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_runtime     = os.popen('grep runtime_directory  ' + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		default_recipe      = os.popen('grep recipe_directories ' + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_working     = os.popen('grep working_directory  ' + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_clusterdesc = os.popen('grep clusterdesc '        + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_logfile     = os.popen('grep log_file '           + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_xml         = os.popen('grep xml_stat_file '      + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		pipeline_cfg        = working_directory + '/pipeline.cfg'
+		plugins_directory   = os.popen('find ' + working_directory           + ' -type d | grep plugins').readlines()[0].rstrip('\n').replace(' ','')
+		recipes_directory   = plugins_directory[:plugins_directory.find(plugins_directory.split('/')[-1])]
 		with open(pipeline_cfg, 'w') as outfile:
 			with open(default_config, 'r') as infile:
 				for line in infile:
@@ -73,6 +76,7 @@ def create_pipeline_config(working_directory):
 							  .replace(default_wcsroot, '')\
 							  .replace(default_pythonpath, os.environ['LOFARROOT'] + '/lib/python2.7/site-packages')\
 							  .replace(default_working, '%(runtime_directory)s')\
+							  .replace(default_recipe, default_recipe.rstrip(']') + ',' + recipes_directory + ']')\
 							  .replace(default_clusterdesc, '%(lofarroot)s/share/local.clusterdesc')\
 							  .replace(default_logfile, '%(runtime_directory)s/%(job_name)s/logs/%(start_time)s/pipeline.log')\
 							  .replace(default_xml, '%(runtime_directory)s/%(job_name)s/logs/%(start_time)s/statistics.xml'))
