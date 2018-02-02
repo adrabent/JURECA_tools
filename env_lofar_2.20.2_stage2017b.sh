@@ -23,12 +23,15 @@ export LOCALROOT=${LOFAR_INSTALL_DIR}/local/release
 export LD_LIBRARY_PATH=${LOFARROOT}/lib64:${LD_LIBRARY_PATH}
 export LD_LIBRARY_PATH=${LOCALROOT}/lib:${LD_LIBRARY_PATH}
 
+export LD_LIBRARY_PATH=${LOFAR_HOME}/software/factor_prereqs/dysco/lib/usr/local/lib:$LD_LIBRARY_PATH
+
 export PATH=${LOFARROOT}/bin:${PATH}
 export PATH=${LOCALROOT}/bin:${PATH}
 export PATH=${LOSOTOROOT}/bin:${PATH}
  
 export PATH=${LOFAR_HOME}/software/RMextract/RMextract:${PATH}
- 
+export PATH=${LOFAR_HOME}/software/factor_prereqs/dysco/lib/usr/local/bin:$PATH
+
 export PYTHONPATH=${LOFARROOT}/lib/python2.7/site-packages:${PYTHONPATH}
 export PYTHONPATH=${LOCALROOT}/lib/python2.7/site-packages:${PYTHONPATH}
 export PYTHONPATH=${LOSOTOROOT}/lib/python2.7/site-packages:${PYTHONPATH}
