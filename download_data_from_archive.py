@@ -10,7 +10,6 @@ import logging
 import resource
 import optparse
 import glob
-import numpy
 
 import time, datetime
 import subprocess
@@ -20,7 +19,7 @@ from GRID_LRT.get_picas_credentials import picas_cred
 from GRID_LRT import Token
 from GRID_LRT.Staging import srmlist
 
-from couchdb.client import Server
+from GRID_LRT.couchdb.client import Server
 
 _version = '0.1beta'
 observation = 'test_L556776'
@@ -28,6 +27,8 @@ software_version = 'env_lofar_2.20.2_stage2017b.sh'
 nodes = 10
 walltime = '05:00:00'
 mail = 'alex@tls-tautenburg.de'
+threshold = 10    ## what is the maximum difference between observation IDs for calibrator and targets
+condition = 'cal' ## condition for the pipeline in order to be idenitified as new observations (usually the calibrator pipeline)
 
 os.system('clear')
 print '\033[30;1m################################################'
@@ -72,10 +73,12 @@ def load_design_documents(database):
 	return designs
 	pass
 
-def get_observations_todo(user, password, database, designs):
+def get_observations_todo(user, password, database, designs, server):
   
-	for design in designs
-		tokens     = Token.Token_Handler( t_type=design, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database)
+	observations = []
+	
+	for design in designs:
+		tokens     = Token.Token_Handler( t_type=design, srv=server, uname=user, pwd=password, dbn=database)
 		list_todos = tokens.list_tokens_from_view('todo')
 		if len(list_todos) > 0:
 			observations.append(design)
@@ -85,7 +88,7 @@ def get_observations_todo(user, password, database, designs):
 	return observations
 	pass
 
-def check_for_new_observation(observations, observation_done):
+def check_for_corresponding_observation(observations, observation_done, tokens_done):
     
 	candidates = []
 	for candidate in observations:
@@ -97,7 +100,21 @@ def check_for_new_observation(observations, observation_done):
 			pass
 		pass
 	
-	candidate = min(candidates, key=lambda x:abs(x - observation_done))
+	try:
+		candidate = min(candidates, key=lambda x:abs(x - observation_done))
+		pass
+	except ValueError:
+		return 1
+		pass
+	      
+	if candidate > threshold:
+		logging.warning('\033[33mNo corresponding observation found for \033[35m' + observation_done)
+		list_done = tokens_done.list_tokens_from_view('done')
+		for item in list_done:
+			set_token_progress(tokens_done, item['value'], 'No corresponding observation found.')
+			pass
+		return 1
+		pass
 	
 	for item in observation:
 		if candidate in item:
@@ -106,6 +123,48 @@ def check_for_new_observation(observations, observation_done):
 		pass
   
 	return observation
+	pass
+
+def get_pipelines(tokens, list_locked):
+	
+	pipelines = []
+	
+	for item in list_locked:
+		token = tokens.db[item['value']]
+		pipeline = token['PIPELINE']
+		if pipeline not in pipelines:
+			pipelines.append(pipeline)
+			pass
+		pass
+      
+	return pipelines
+	pass
+      
+def find_new_observation(observations, observation_done, server, user, password, database):
+
+	condition_observations = []
+	
+	for observation in observations:
+		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of certain type
+		list_todos     = tokens.list_tokens_from_view('todo')   # check which tokens of certain type are in the todo state
+		pipelines_todo = get_pipelines(tokens, list_todos)
+		for pipeline in pipelines_todo:
+			if condition in pipeline:
+				condition_observations.append(observation)
+				check = check_for_corresponding_observation(observations, observation, tokens)
+				if check != 1:
+					return observation
+					pass
+				pass
+			pass
+		pass
+	
+	try:
+		return condition_observations[0]
+		pass
+	except IndexError:
+		return observation_done
+		pass
 	pass
       
 def lock_token(tokens, token_value):
@@ -249,7 +308,7 @@ def download_data(tokens, list_todos, pipeline_todownload, working_directory):
 	
 	
 	gsilist = download_list.gsi_links() # convert the srm list to a GSI list (proper URLs for GRID download)
-	gsilist = list(reversed(list(set(gsilist)))) # to re-reverse the list in order to match it for the upcoming loop and use only distinct files
+	gsilist = sorted(list(set(gsilist))) # to re-reverse the list in order to match it for the upcoming loop and use only distinct files
 	for url,item in zip(gsilist, list_todos):
 		status = token_status(tokens, item['value'])
 		set_token_status(tokens, item['value'], 'downloading')
@@ -440,21 +499,6 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slur
 	return 0
 	pass
 	
-
-def get_pipelines(tokens, list_locked):
-	
-	pipelines = []
-	
-	for item in list_locked:
-		token = tokens.db[item['value']]
-		pipeline = token['PIPELINE']
-		if pipeline not in pipelines:
-			pipelines.append(pipeline)
-			pass
-		pass
-      
-	return pipelines
-	pass
 	
 def pipeline_status(tokens, list_pipeline):
 	
@@ -564,19 +608,6 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		logging.error('\033[31mAn instance of this program appears to be still running. If not, please remove the lock file: \033[0m' + lock_file)
 		return 1
 		pass
-	elif is_running(submitted): 
-		logging.info('\033[0mAnother pipeline has already been submitted.')
-		slurm_list = glob.glob(slurm_files)
-		if len(slurm_list) > 0:
-			slurm_log = slurm_list[-1]
-			job_id = os.path.basename(slurm_log).lstrip('slurm-').rstrip('.out')
-			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
-			log_information = check_submitted_job(slurm_log, submitted)
-			pass
-		else:
-			return 0
-			pass
-		pass
 	           
 	## load PiCaS credentials and connect to server
 	logging.info('\033[0mConnecting to server: ' + server)
@@ -588,31 +619,61 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	couchdb_server.resource.credentials = (pc.user, pc.password)
 	
 	## load all design documents
-	designs      = load_design_documents(couchdb_server[pc.database])
-	observations = get_observations_todo(pc.user, pc.password, pc.database, designs)
+	designs          = load_design_documents(couchdb_server[pc.database])
+	observations     = get_observations_todo(pc.user, pc.password, pc.database, designs, server)
+	observation_done = 1
 	
 	## check latest observation
 	if is_running(last_observation):
 		observation = open(last_observation).readline().rstrip()
-		if observation not in designs:
-			logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m . Please check the database for errors or remove the last observation.')
-			return 1
-			pass
+		for design in designs:
+			if observation in design:
+				continue
+				pass
+			else:
+				logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m . Please check the database for errors or remove the last observation.')
+				return 1
+				pass
 		if is_running(done):
-			logging.error('\033[31mChecking new observations.')
+			logging.info('Checking for a corresponding observation for: \033[35m' + observation)
 			observation_done = int(filter(lambda x: x.isdigit(), observation))
-			observation = check_for_new_observation(observations, observation_done)
+			tokens_done = Token.Token_Handler( t_type=observation_done, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of done observation
+			observation = check_for_corresponding_observation(observations, observation_done, tokens_done)
 			pass
 		pass
 	
-	
+	## check for new observations if necessary
+	if not is_running(last_observation) or observation == 1:
+		observation = find_new_observation(observations, observation_done, server, pc.user, pc.password, pc.database)
+		if observation == 1:
+			logging.warning('\033[33mNo new observations could be found. If database is not empty please check it for new or false tokens manually.')
+			return 1
+			pass
+		pass
+
 	## reserve following processes
 	logging.info('Selected observation: \033[35m' + observation)
 	subprocess.Popen(['touch', lock_file])
-	numpy.savetxt(last_observation, observation)
-	
+	observation_file = open(last_observation, 'w')
+	observation_file.write(observation)
+	observation_file.close()
+
+	if is_running(submitted): 
+		logging.info('\033[0mA pipeline has already been submitted.')
+		slurm_list = glob.glob(slurm_files)
+		if len(slurm_list) > 0:
+			slurm_log = slurm_list[-1]
+			job_id = os.path.basename(slurm_log).lstrip('slurm-').rstrip('.out')
+			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
+			log_information = check_submitted_job(slurm_log, submitted)
+			pass
+		else:
+			return 0
+			pass
+		pass
+		
 	## load token of chosen design document
-	tokens   = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
+	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
 	
 	## check for new data sets and get information about other tokens present
 	list_locked = tokens.list_tokens_from_view('locked') # check which tokens of certain type are in the locked state
@@ -626,19 +687,24 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	pipelines_done   = get_pipelines(tokens, list_done)
 	pipelines_todo   = get_pipelines(tokens, list_todos)
 	
+	## check pipelines to run
 	pipelines = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
+	#print locked_pipelines, pipelines_done, pipelines_todo, len(list_todos)
 
-	#check what to download
-	if len(list_todos) > 0 and len(list_done) == 0:
+	## check what to download
+	if len(list_todos) > 0 and len(list_done) == 0 and len(pipelines) == 0:
 		download_data(tokens, list_todos, pipelines_todo[0], working_directory)
 		pass
+
+	## update pipelines to run
+	pipelines = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
 	
-	#check errors of the pipelines
+	## check errors of the pipelines
 	if len(bad_pipelines) != 0:
 		logging.warning('\033[33mPipeline(s) \033[35m' + str(bad_pipelines) + '\033[33m show errors. Please check their token status. Script will try to rerun them.')
 		pass
 	
-	#check all finished pipelines
+	## check all finished pipelines
 	if len(pipelines_done) !=0:
 		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m for this observation are done.')
 		if len(pipelines) == 0 and len(pipelines_todo) != 0:
@@ -661,9 +727,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 				pass
 			pass
 		pass
-
-
-	# main pipeline loop
+	
+	## main pipeline loop
 	for pipeline in pipelines:
 		list_pipeline = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
 		status = pipeline_status(tokens, list_pipeline)
