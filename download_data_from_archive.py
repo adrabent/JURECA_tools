@@ -10,6 +10,7 @@ import logging
 import resource
 import optparse
 import glob
+import shutil
 
 import time, datetime
 import subprocess
@@ -27,6 +28,10 @@ software_version = 'env_lofar_2.20.2_stage2017b.sh'
 nodes = 10
 walltime = '05:00:00'
 mail = 'alex@tls-tautenburg.de'
+IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/'
+num_SBs_per_group_var = 10
+max_dppp_threads_var = 10
+max_proc_per_node_limit_var = 6
 threshold = 10    ## what is the maximum difference between observation IDs for calibrator and targets
 condition = 'cal' ## condition for the pipeline in order to be idenitified as new observations (usually the calibrator pipeline)
 
@@ -88,7 +93,7 @@ def get_observations_todo(user, password, database, designs, server):
 	return observations
 	pass
 
-def check_for_corresponding_observation(observations, observation_done, tokens_done):
+def check_for_corresponding_observation(observations, observation, tokens_done):
     
 	candidates = []
 	for candidate in observations:
@@ -101,6 +106,7 @@ def check_for_corresponding_observation(observations, observation_done, tokens_d
 		pass
 	
 	try:
+	        observation_done = int(filter(lambda x: x.isdigit(), observation))
 		candidate = min(candidates, key=lambda x:abs(x - observation_done))
 		pass
 	except ValueError:
@@ -108,15 +114,20 @@ def check_for_corresponding_observation(observations, observation_done, tokens_d
 		pass
 	      
 	if candidate > threshold:
-		logging.warning('\033[33mNo corresponding observation found for \033[35m' + observation_done)
+		logging.warning('\033[33mNo corresponding observation found for \033[35mL' + str(observation_done))
 		list_done = tokens_done.list_tokens_from_view('done')
-		for item in list_done:
-			set_token_progress(tokens_done, item['value'], 'No corresponding observation found.')
+		pipelines_done = get_pipelines(tokens_done, list_done)
+		for pipeline in pipelines_done:
+			if condition in pipeline:
+				for item in list_done:
+					set_token_progress(tokens_done, item['value'], 'No corresponding observation found.')
+					pass
+				pass
 			pass
 		return 1
 		pass
 	
-	for item in observation:
+	for item in observations:
 		if candidate in item:
 			observation = item
 			pass
@@ -140,39 +151,67 @@ def get_pipelines(tokens, list_locked):
 	return pipelines
 	pass
       
-def find_new_observation(observations, observation_done, server, user, password, database):
+def find_new_observation(observations, observation_done, server, user, password, database, working_directory):
 
 	condition_observations = []
 	
 	for observation in observations:
 		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of certain type
 		list_todos     = tokens.list_tokens_from_view('todo')   # check which tokens of certain type are in the todo state
-		pipelines_todo = get_pipelines(tokens, list_todos)
+		try:
+			pipelines_todo = get_pipelines(tokens, list_todos)
+		except KeyError:
+			logging.warning('Observation: \033[35m' + observation + '\033[33m is invalid.')
+			continue
+			pass
 		for pipeline in pipelines_todo:
 			if condition in pipeline:
 				condition_observations.append(observation)
 				check = check_for_corresponding_observation(observations, observation, tokens)
 				if check != 1:
+					logging.info('Cleaning working directory.', ignore_errors=True)
+					shutil.rmtree(working_directory)
 					return observation
 					pass
 				pass
 			pass
 		pass
 	
-	try:
+	if len(condition_observations) > 0:
+	  	logging.info('Cleaning working directory.')
+		shutil.rmtree(working_directory, ignore_errors=True)
 		return condition_observations[0]
 		pass
-	except IndexError:
+	else:
 		return observation_done
 		pass
 	pass
-      
+              
 def lock_token(tokens, token_value):
 	
 	token = tokens.db[token_value]
 	token['lock'] = time.time()
 	tokens.db.update([token])
 	logging.info('Token \033[35m' + token_value + '\033[32m has been locked.')
+	pass
+      
+def lock_token_done(tokens, token_value):
+	
+	token = tokens.db[token_value]
+	token['done'] = time.time()
+	tokens.db.update([token])
+	logging.info('Token \033[35m' + token_value + '\033[32m is done.')
+	pass
+      
+def add_time_stamp(tokens, token_value, status):
+	
+	token = tokens.db[token_value]
+	times = token['times']
+	
+	times[status]   = time.time()
+	token['times']  = times
+
+	tokens.db.update([token])
 	pass
 
 def set_token_status(tokens, token_value, status):
@@ -252,6 +291,26 @@ def is_running(lock_file):
 		pass
 	pass
 
+def pack_data(tokens, token_value, filename, pack_directory):
+  
+	os.chdir(pack_directory)
+	logging.info('Packing file: \033[35m' + filename)
+	set_token_progress(tokens, token_value, 'Packing file: ' + filename)
+	add_time_stamp(tokens, token_value, 'packing')
+	pack = subprocess.Popen(['tar', 'cfv', filename + '.tar', filename], stdout=subprocess.PIPE)
+	errorcode = pack.wait()
+	if errorcode == 0:
+		set_token_output(tokens, token_value, 0)
+		logging.info('Packing of \033[35m' + filename + '\033[32m finished.')
+		pass
+	else:
+		logging.error('\033[31mPacking failed, error code: ' + str(errorcode))
+		set_token_output(tokens, token_value, -1)
+		set_token_progress(tokens, token_value, 'Packing failed, error code: ' + str(errorcode))
+		add_time_stamp(tokens, token_value, 'error')
+		pass
+	pass
+      
 def unpack_data(tokens, token_value, filename, working_directory):
   
 	token = tokens.db[token_value]
@@ -271,9 +330,9 @@ def unpack_data(tokens, token_value, filename, working_directory):
 	else:
 		logging.error('\033[31mUnpacking failed, error code: ' + str(errorcode))
 		set_token_status(tokens, token_value, 'error')
-		set_token_output(tokens, item['value'], 20)
-		set_token_progress(tokens, item['value'], 'Unpacking failed, error code: ' + str(errorcode))
-		unlock_token(tokens, item['value'])
+		set_token_output(tokens, token_value, 20)
+		set_token_progress(tokens, token_value, 'Unpacking failed, error code: ' + str(errorcode))
+		unlock_token(tokens, token_value)
 		pass
 	pass
 
@@ -351,7 +410,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		IONEX_script         = os.popen('find ' + working_directory + ' | grep download_IONEX.py').readlines()[0].rstrip('\n').replace(' ','')
 		IONEX_path           = os.popen('grep ionex_path '           + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		file.write(IONEX_script + ' --destination ' + IONEX_path + ' ' + working_directory + '/' + target_input_pattern)
+		jobfile.write(IONEX_script + ' --destination ' + IONEX_path + ' --server ' + IONEX_server + ' ' + working_directory + '/' + target_input_pattern + '\n')
 		pass
 	except IndexError:
 		pass
@@ -359,7 +418,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		skymodel_script      = os.popen('find ' + working_directory + ' | grep download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		file.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel)
+		jobfile.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
 		pass
 	except IndexError:
 		pass
@@ -433,26 +492,58 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slur
 	num_proc_per_node_limit = os.popen('grep "! num_proc_per_node_limit" ' + parset).readlines()[0].rstrip('\n').replace('/','\/')
 	max_dppp_threads        = os.popen('grep "! max_dppp_threads" '        + parset).readlines()[0].rstrip('\n').replace('/','\/')
 	losoto_executable       = os.popen('grep "! losoto_executable" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	cal_input_pattern       = os.popen('grep "! cal_input_pattern" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	makesourcedb            = os.popen('grep "! makesourcedb" '            + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	flagging_strategy       = os.popen('grep "! flagging_strategy" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	num_SBs_per_group       = os.popen('grep "! num_SBs_per_group" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	try:
+		cal_input_pattern    = os.popen('grep "! cal_input_pattern" '  + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		pass
+	except IndexError:
+		cal_input_pattern    = ''
+		pass
+	try:
+		target_input_pattern = os.popen('grep "! target_input_pattern" ' + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		pass
+	except IndexError:
+		target_input_pattern = ''
+		pass
 		
-	os.system('sed -i "s/' + losoto_executable       + '/! losoto_executable         = \$LOSOTOROOT\/bin\/losoto/g " ' + parset)
-	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node         = input.output.max_per_node/g" '  + parset)
-	os.system('sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit   = 10/g" '                         + parset)
-	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads          = 10/g" '                         + parset)
+	os.system('sed -i "s/' + losoto_executable       + '/! losoto_executable       = \$LOFARROOT\/bin\/losoto/g " '                      + parset)
+	os.system('sed -i "s/' + makesourcedb            + '/! makesourcedb            = \$LOFARROOT\/bin\/makesourcedb/g " '                + parset)
+	os.system('sed -i "s/' + flagging_strategy       + '/! flagging_strategy       = \$LOFARROOT\/share\/rfistrategies\/HBAdefault/g " ' + parset)
+	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = input.output.max_per_node/g" '                      + parset)
+	os.system('sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var) + '/g" '       + parset)
+	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)        + '/g" '       + parset)
+	os.system('sed -i "s/' + num_SBs_per_group       + '/! num_SBs_per_group       = ' + str(num_SBs_per_group_var)       + '/g" '       + parset)
 	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$WORK/g" ' + parset)
 	
-	cal_input_path          = os.popen('grep "! cal_input_path" '          + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
-	if not 'MS' in cal_input_pattern:
-		os.system('sed -i "s/' + cal_input_path  + '/! cal_input_path       = \$WORK\/pipeline/g" '                + parset)
+	try:
+		input_path = os.popen('grep "! cal_input_path" '    + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
+		if not 'MS' in cal_input_pattern:
+			os.system('sed -i "s/' + input_path  + '/! cal_input_path      = \$WORK\/pipeline/g" '                               + parset)
+			pass
 		pass
-	
-	#sys.exit(0)
+	except IndexError:
+		input_path = os.popen('grep "! target_input_path" ' + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
+		if not 'MS' in target_input_pattern:
+			os.system('sed -i "s/' + input_path  + '/! target_input_path   = \$WORK\/pipeline/g" '                               + parset)
+			pass
+		pass
+	try:
+		results_directory = os.popen('grep "! results_directory" ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace('$WORK', working_directory).replace(' ','')
+		results = glob.glob(results_directory + '/*.ms')
+		for result in results:
+			shutil.move(result, working_directory + '/pipeline/.')
+			pass
+		pass
+	except IndexError:
+		pass
+
 	## downloading prefactor
 	sandbox = ftp + SBXloc
 	filename = working_directory + '/prefactor.tar'
 	logging.info('Downloading current prefactor version from \033[35m' + sandbox)
 	download = subprocess.Popen(['globus-url-copy', sandbox , 'file:' + filename], stdout=subprocess.PIPE)
-	#download = subprocess.Popen(['curl', ftp, '--output', filename], stdout=subprocess.PIPE)
 	errorcode = download.wait()
 	if errorcode != 0:
 		logging.error('\033[31m Downloading prefactor has failed.')
@@ -460,8 +551,8 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slur
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], -1)
 			set_token_progress(tokens, item['value'], 'download of prefactor failed, error code: ' + str(int(errorcode)))
-			return 1
 			pass
+		return 1
 		pass
 	      
 	logging.info('Unpacking current prefactor version to \033[35m' + working_directory)
@@ -522,6 +613,22 @@ def pipeline_output(tokens, list_pipeline):
 	return output
 	pass
 
+
+def update_freq(tokens, token_value, freq):
+    
+	token = tokens.db[token_value] 
+	
+	A_SBN = int(round((((float(freq)/1e6 - 100.0) / 100.0) * 512.0),0))
+	if 'FREQ' in token.keys():
+		token['FREQ'] = freq
+		pass
+	
+	token['ABN'] = A_SBN
+	tokens.db.update([token])
+	
+	return A_SBN
+	pass
+
 def check_submitted_job(slurm_log, submitted):
 	  
 	log_information = os.popen('tail -9 ' + slurm_log).readlines()[0].rstrip('\n')
@@ -557,7 +664,9 @@ def submit_error_log(tokens, token_value, slurm_log, log_information, working_di
 	elif 'finished' in log_information:
 		set_token_status(tokens, token_value, 'done')
 		set_token_output(tokens, token_value, 0)
+		lock_token_done(tokens, token_value)
 		set_token_progress(tokens, token_value, log_information[log_information.find('genericpipeline:'):])
+		
 		if os.path.exists(working_directory + '/pipeline/statefile'):
 			os.remove(working_directory + '/pipeline/statefile')
 			pass
@@ -567,11 +676,19 @@ def submit_error_log(tokens, token_value, slurm_log, log_information, working_di
 	return 0
 	pass
       
-def submit_results(tokens, token_value, working_directory, upload):
+def submit_results(tokens, token_value, observation, list_done, working_directory, upload):
 
 	parset               = working_directory + '/pipeline.parset'
 	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
-	
+
+	try:
+		results_directory = os.popen('grep "! results_directory" ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace('$WORK', working_directory).replace(' ','')
+		results     = glob.glob(results_directory + '/*.ms')
+		calibration = glob.glob(results_directory + '/*.h5')
+	except IndexError:
+		results = []
+		pass
+
 	attachments = tokens.list_attachments(token_value)
 	old_images  = [i for i in attachments if '.png' in i]
 	doc = tokens.db[token_value]
@@ -580,13 +697,67 @@ def submit_results(tokens, token_value, working_directory, upload):
 		pass
 	      
 	# upload inspection plots
+	os.remove(upload)
 	images = glob.glob(inspection_directory + '/*.png')
 	for image in images:
 		tokens.add_attachment(token_value, open(image,'r'), os.path.basename(image))
 		pass
-
-	os.remove(upload)
 	logging.info('Inspection plots have been uploaded.')
+	if len(images) > 1 and (len(results)> 0 or len(calibration) > 0):
+		list_transfer = []
+		for item in list_done:
+			if token_output(tokens, item['value']) == 1:
+				continue
+				pass
+			list_transfer.append(item)
+			pass
+		observation = 'L' + str(filter(lambda x: x.isdigit(), observation))        ## checkout location for pipeline
+		for item, result in zip(list_transfer, results):
+			pack_data(tokens, item['value'], result, inspection_directory)
+			token = tokens.db[item['value']]
+			transfer_dir = token['RESULTS_DIR'] + '/' + observation             ## get results directory
+			subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
+			freq = os.popen('taql "select distinct REF_FREQUENCY from ' + result + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+			ABN = update_freq(tokens, item['value'], freq)
+			filename = transfer_dir + '/GSM_CAL_' + observation + '_ABN_' + str(ABN) + '.tar'
+			logging.info('\033[35m' + result + '\033[32m is now transfered to: \033[35m' + filename)
+			set_token_progress(tokens, item['value'], 'Transfer of data to: ' + filename)
+			add_time_stamp(tokens, item['value'], 'transferring')
+			transfer = subprocess.Popen(['globus-url-copy', 'file:' + result + '.tar', filename], stdout=subprocess.PIPE)
+			errorcode = transfer.wait()
+			if errorcode == 0:
+				logging.info('File \033[35m' + result + '\033[32m was transfered.')
+				shutil.move(result, working_directory + '/pipeline/.')
+				set_token_output(tokens, item['value'], 1)
+				set_token_progress(tokens, item['value'], 'Transfer of data has been finished.')
+				add_time_stamp(tokens, item['value'], 'transferred')
+				pass
+			else:
+				logging.error('\033[31mTransfer of \033[35m' + result + '\033[31m failed. Error code: \033[35m' + str(errorcode))
+				set_token_output(tokens, token_value, -1)
+				set_token_progress(tokens, token_value, 'Transfer of ' + str(result) + ' failed.')
+				add_time_stamp(tokens, item['value'], 'error')
+				subprocess.Popen(['touch', upload])
+				pass
+			pass
+		if len(calibration) > 0:
+			logging.info('Calibration results are transferred.')
+			token = tokens.db[token_value]
+			transfer_dir = token['RESULTS_DIR'] + '/' + observation             ## get results directory
+			filename = transfer_dir + '/' + calibration[0].split('/')[-1]
+			transfer = subprocess.Popen(['globus-url-copy', 'file:' + calibration[0], filename], stdout=subprocess.PIPE)
+			errorcode = transfer.wait()
+			if errorcode == 0:
+				logging.info('File \033[35m' + calibration[0] + '\033[32m was transfered.')
+				pass
+			else:
+				logging.error('\033[31mTransfer of \033[35m' + calibration[0] + '\033[31m failed. Error code: \033[35m' + str(errorcode))
+				subprocess.Popen(['touch', upload])
+				pass
+			pass
+		pass
+	
+	logging.info('Submitting results has been finished.')
 	return 0
 	pass
 
@@ -621,43 +792,29 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	## load all design documents
 	designs          = load_design_documents(couchdb_server[pc.database])
 	observations     = get_observations_todo(pc.user, pc.password, pc.database, designs, server)
-	observation_done = 1
+	observation      = 1
 	
 	## check latest observation
 	if is_running(last_observation):
 		observation = open(last_observation).readline().rstrip()
-		for design in designs:
-			if observation in design:
-				continue
-				pass
-			else:
-				logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m . Please check the database for errors or remove the last observation.')
-				return 1
-				pass
 		if is_running(done):
 			logging.info('Checking for a corresponding observation for: \033[35m' + observation)
-			observation_done = int(filter(lambda x: x.isdigit(), observation))
-			tokens_done = Token.Token_Handler( t_type=observation_done, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of done observation
-			observation = check_for_corresponding_observation(observations, observation_done, tokens_done)
+			tokens_done = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of done observation
+			observation = check_for_corresponding_observation(observations, observation, tokens_done)
 			pass
 		pass
 	
 	## check for new observations if necessary
 	if not is_running(last_observation) or observation == 1:
-		observation = find_new_observation(observations, observation_done, server, pc.user, pc.password, pc.database)
+	        logging.info('Looking for a new observation.')
+		observation = find_new_observation(observations, observation, server, pc.user, pc.password, pc.database, working_directory)
 		if observation == 1:
 			logging.warning('\033[33mNo new observations could be found. If database is not empty please check it for new or false tokens manually.')
 			return 1
 			pass
 		pass
 
-	## reserve following processes
-	logging.info('Selected observation: \033[35m' + observation)
-	subprocess.Popen(['touch', lock_file])
-	observation_file = open(last_observation, 'w')
-	observation_file.write(observation)
-	observation_file.close()
-
+	## check whether a job has been already submitted
 	if is_running(submitted): 
 		logging.info('\033[0mA pipeline has already been submitted.')
 		slurm_list = glob.glob(slurm_files)
@@ -671,9 +828,22 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			return 0
 			pass
 		pass
-		
+
+	## reserve following processes
+	logging.info('Selected observation: \033[35m' + observation)
+	subprocess.Popen(['touch', lock_file])
+	observation_file = open(last_observation, 'w')
+	observation_file.write(observation)
+	observation_file.close()
+	
 	## load token of chosen design document
-	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
+	try:
+		tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
+		pass
+	except:
+		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m . Please check the database for errors or remove the last observation.')
+		return 1
+		pass
 	
 	## check for new data sets and get information about other tokens present
 	list_locked = tokens.list_tokens_from_view('locked') # check which tokens of certain type are in the locked state
@@ -697,7 +867,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		pass
 
 	## update pipelines to run
-	pipelines = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
+	locked_pipelines = get_pipelines(tokens, list_locked)
+	pipelines        = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
 	
 	## check errors of the pipelines
 	if len(bad_pipelines) != 0:
@@ -715,9 +886,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			pass
 		if len(pipelines) == 0 and len(pipelines_todo) == 0:
 			if is_running(upload):
+				list_done = tokens.list_tokens_from_view(pipelines_done[-1])
 				for i, item in enumerate(list_done):
-					if i == len(list_done) - 1:
-						submit_results(tokens, item['value'], working_directory, upload)
+					if i == 0:
+						submit_results(tokens, item['value'], observation, list_done, working_directory, upload)
 						pass
 					pass
 				pass
@@ -734,7 +906,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		status = pipeline_status(tokens, list_pipeline)
 		output = pipeline_output(tokens, list_pipeline)
 		if len(status) > 1:
-			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m shows more than one status: \033[35m' + str(status) + '\033[33m. Script will proceed without it.')
+			logging.error('\033[31mPipeline \033[35m' + pipeline + '\033[31m shows more than one status: \033[35m' + str(status) + '\033[31m. Script will not proceed.')
+			for item in list_pipeline:
+				set_token_status(tokens, item['value'], 'error')
+				pass
 			continue
 			pass
 		elif status[0] == 'todo':
@@ -832,4 +1007,3 @@ if __name__=='__main__':
 	
 	sys.exit(0)
 	pass
-    
