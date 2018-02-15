@@ -1,13 +1,7 @@
 #!/usr/bin/env sh
 
-. /homea/htb00/htb006/env_lofar_GRID_stage2017b.sh
+env |grep SLURM
 
-file=$HOME/SKSP_monitoring.py
-proxy=$HOME/launch_proxy.sh
+. /homea/htb00/htb006/env_lofar_2.20.2_stage2017b.sh
 
-$proxy
-while [ 1 ]
-do
-	$file
-	sleep 900s
-done
+./LOFAR.py -c $1 $2
