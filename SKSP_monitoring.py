@@ -142,7 +142,7 @@ def get_pipelines(tokens, list_locked):
 	
 	for item in list_locked:
 		token = tokens.db[item['value']]
-		pipeline = token['PIPELINE']
+		pipeline = token['pipeline']
 		if pipeline not in pipelines:
 			pipelines.append(pipeline)
 			pass
@@ -341,7 +341,7 @@ def download_data(tokens, list_todos, pipeline_todownload, working_directory):
 	download_list = srmlist.srmlist()                   # create list to download
 	for item in list_todos:
 		token = tokens.db[item['value']]
-		pipeline = token['PIPELINE']
+		pipeline = token['pipeline']
 		if pipeline != pipeline_todownload:
 			continue
 			pass
@@ -809,7 +809,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	        logging.info('Looking for a new observation.')
 		observation = find_new_observation(observations, observation, server, pc.user, pc.password, pc.database, working_directory)
 		if observation == 1:
-			logging.warning('\033[33mNo new observations could be found. If database is not empty please check it for new or false tokens manually.')
+			logging.info('\033[0mNo new observations could be found. If database is not empty please check it for new or false tokens manually.')
 			return 1
 			pass
 		pass
@@ -831,19 +831,12 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 
 	## reserve following processes
 	logging.info('Selected observation: \033[35m' + observation)
-	subprocess.Popen(['touch', lock_file])
 	observation_file = open(last_observation, 'w')
 	observation_file.write(observation)
 	observation_file.close()
 	
 	## load token of chosen design document
-	try:
-		tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
-		pass
-	except:
-		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m . Please check the database for errors or remove the last observation.')
-		return 1
-		pass
+	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
 	
 	## check for new data sets and get information about other tokens present
 	list_locked = tokens.list_tokens_from_view('locked') # check which tokens of certain type are in the locked state
@@ -852,12 +845,27 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	list_todos  = tokens.list_tokens_from_view('todo')   # check which tokens of certain type are in the todo state
 	
 	## check which pipelines are locked, done or show errors
-	locked_pipelines = get_pipelines(tokens, list_locked)
-	bad_pipelines    = get_pipelines(tokens, list_error)
-	pipelines_done   = get_pipelines(tokens, list_done)
-	pipelines_todo   = get_pipelines(tokens, list_todos)
+	try:
+		locked_pipelines = get_pipelines(tokens, list_locked)
+		bad_pipelines    = get_pipelines(tokens, list_error)
+		pipelines_done   = get_pipelines(tokens, list_done)
+		pipelines_todo   = get_pipelines(tokens, list_todos)
+	except TypeError:
+		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors or remove the last observation.')
+		return 1
+		pass
 	
-	## check pipelines to run
+	## lock program
+	subprocess.Popen(['touch', lock_file])
+
+	## add views for users
+	tokens.add_view(v_name='downloading', cond=' doc.status == "downloading" ')
+	tokens.add_view(v_name='unpacking', cond=' doc.status == "unpacking" ')
+	tokens.add_view(v_name='unpacked', cond=' doc.status == "unpacked" ')
+	tokens.add_view(v_name='submitted', cond=' doc.status == "submitted" ')
+	tokens.add_view(v_name='processing', cond=' doc.status == "processing" ')
+	
+	## check pipelines to run	
 	pipelines = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
 	#print locked_pipelines, pipelines_done, pipelines_todo, len(list_todos)
 
@@ -1007,3 +1015,4 @@ if __name__=='__main__':
 	
 	sys.exit(0)
 	pass
+    
