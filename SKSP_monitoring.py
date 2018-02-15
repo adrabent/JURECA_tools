@@ -23,10 +23,9 @@ from GRID_LRT.Staging import srmlist
 from GRID_LRT.couchdb.client import Server
 
 _version = '0.1beta'
-observation = 'test_L556776'
 software_version = 'env_lofar_2.20.2_stage2017b.sh'
 nodes = 10
-walltime = '05:00:00'
+walltime = '02:00:00'
 mail = 'alex@tls-tautenburg.de'
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/'
 num_SBs_per_group_var = 10
@@ -93,21 +92,48 @@ def get_observations_todo(user, password, database, designs, server):
 	return observations
 	pass
 
-def check_for_corresponding_observation(observations, observation, tokens_done):
+def get_observation_id(tokens, list_todos):
+	
+	obsids = []
+	
+	for item in list_todos:
+		token = tokens.db[item['value']]
+		obsid = token['OBSID']
+		if obsid not in obsids:
+			obsids.append(obsid)
+			pass
+		pass
+
+	if len(obsids) > 1:
+		return 1
+		pass
+	else:
+		return obsids[0]
+		pass
+	pass
+
+def check_for_corresponding_observation(observations, observation, server, user, password, database, tokens_done):
     
 	candidates = []
 	for candidate in observations:
 		try:
-			candidates.append(int(filter(lambda x: x.isdigit(), candidate)))
+			tokens_candidate = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database)
+			tokens_candidate.add_view(v_name='overview_all', cond=' doc.lock > 0 | doc.lock == 0')
+			list_all         = tokens_candidate.list_tokens_from_view('overview_all')
+			obsid            = get_observation_id(tokens_candidate, list_all)
+			candidates.append(int(filter(lambda x: x.isdigit(), obsid)))
 			pass
-		except ValueError:
+		except ValueError or IndexError:
 			continue
 			pass
 		pass
 	
 	try:
-	        observation_done = int(filter(lambda x: x.isdigit(), observation))
-		candidate = min(candidates, key=lambda x:abs(x - observation_done))
+		tokens_done.add_view(v_name='overview_all', cond=' doc.lock > 0 | doc.lock == 0')
+		list_all         = tokens_done.list_tokens_from_view('overview_all')
+		obsid            = get_observation_id(tokens_done, list_all)
+	        observation_done = int(filter(lambda x: x.isdigit(), obsid))
+		candidate        = min(candidates, key=lambda x:abs(x - observation_done))
 		pass
 	except ValueError:
 		return 1
@@ -167,7 +193,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 		for pipeline in pipelines_todo:
 			if condition in pipeline:
 				condition_observations.append(observation)
-				check = check_for_corresponding_observation(observations, observation, tokens)
+				check = check_for_corresponding_observation(observations, observation, server, user, password, database, tokens)
 				if check != 1:
 					logging.info('Cleaning working directory.', ignore_errors=True)
 					shutil.rmtree(working_directory)
@@ -314,7 +340,6 @@ def pack_data(tokens, token_value, filename, pack_directory):
 def unpack_data(tokens, token_value, filename, working_directory):
   
 	token = tokens.db[token_value]
-	observation_id = token['OBSID']
 
 	set_token_status(tokens, token_value, 'unpacking')
 	
@@ -436,7 +461,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	pass
    
    
-def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slurm_files, pipeline):
+def run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline):
   
 	parset     = working_directory + '/pipeline.parset'
 	parset2    = working_directory + '/pipeline2.parset'
@@ -492,9 +517,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slur
 	num_proc_per_node_limit = os.popen('grep "! num_proc_per_node_limit" ' + parset).readlines()[0].rstrip('\n').replace('/','\/')
 	max_dppp_threads        = os.popen('grep "! max_dppp_threads" '        + parset).readlines()[0].rstrip('\n').replace('/','\/')
 	losoto_executable       = os.popen('grep "! losoto_executable" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	makesourcedb            = os.popen('grep "! makesourcedb" '            + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	flagging_strategy       = os.popen('grep "! flagging_strategy" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	num_SBs_per_group       = os.popen('grep "! num_SBs_per_group" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
+
 	try:
 		cal_input_pattern    = os.popen('grep "! cal_input_pattern" '  + parset).readlines()[0].rstrip('\n').replace('/','\/')
 		pass
@@ -502,33 +525,34 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slur
 		cal_input_pattern    = ''
 		pass
 	try:
+		input_path           = os.popen('grep "! target_input_path" '    + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
 		target_input_pattern = os.popen('grep "! target_input_pattern" ' + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		pass
-	except IndexError:
-		target_input_pattern = ''
-		pass
+		makesourcedb         = os.popen('grep "! makesourcedb" '         + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		flagging_strategy    = os.popen('grep "! flagging_strategy" '    + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		num_SBs_per_group    = os.popen('grep "! num_SBs_per_group" '    + parset).readlines()[0].rstrip('\n').replace('/','\/')
 		
-	os.system('sed -i "s/' + losoto_executable       + '/! losoto_executable       = \$LOFARROOT\/bin\/losoto/g " '                      + parset)
-	os.system('sed -i "s/' + makesourcedb            + '/! makesourcedb            = \$LOFARROOT\/bin\/makesourcedb/g " '                + parset)
-	os.system('sed -i "s/' + flagging_strategy       + '/! flagging_strategy       = \$LOFARROOT\/share\/rfistrategies\/HBAdefault/g " ' + parset)
-	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = input.output.max_per_node/g" '                      + parset)
-	os.system('sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var) + '/g" '       + parset)
-	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)        + '/g" '       + parset)
-	os.system('sed -i "s/' + num_SBs_per_group       + '/! num_SBs_per_group       = ' + str(num_SBs_per_group_var)       + '/g" '       + parset)
-	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$WORK/g" ' + parset)
-	
-	try:
-		input_path = os.popen('grep "! cal_input_path" '    + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
-		if not 'MS' in cal_input_pattern:
-			os.system('sed -i "s/' + input_path  + '/! cal_input_path      = \$WORK\/pipeline/g" '                               + parset)
-			pass
-		pass
-	except IndexError:
-		input_path = os.popen('grep "! target_input_path" ' + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
+		os.system('sed -i "s/' + makesourcedb            + '/! makesourcedb            = \$LOFARROOT\/bin\/makesourcedb/g " '                + parset)
+		os.system('sed -i "s/' + flagging_strategy       + '/! flagging_strategy       = \$LOFARROOT\/share\/rfistrategies\/HBAdefault/g " ' + parset)
+		os.system('sed -i "s/' + num_SBs_per_group       + '/! num_SBs_per_group       = ' + str(num_SBs_per_group_var)       + '/g" '       + parset)
+			
 		if not 'MS' in target_input_pattern:
 			os.system('sed -i "s/' + input_path  + '/! target_input_path   = \$WORK\/pipeline/g" '                               + parset)
 			pass
 		pass
+	except IndexError:
+		input_path = os.popen('grep "! cal_input_path" '    + parset).readlines()[0].rstrip('\n').replace('/','\/').replace('$','\$')
+		
+		if not 'MS' in cal_input_pattern:
+			os.system('sed -i "s/' + input_path  + '/! cal_input_path      = \$WORK\/pipeline/g" '                               + parset)
+			pass
+		pass
+		
+	os.system('sed -i "s/' + losoto_executable       + '/! losoto_executable       = \$LOFARROOT\/bin\/losoto/g " '                      + parset)
+	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = input.output.max_per_node/g" '                      + parset)
+	os.system('sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var) + '/g" '       + parset)
+	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)        + '/g" '       + parset)
+	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$WORK/g" ' + parset)
+	
 	try:
 		results_directory = os.popen('grep "! results_directory" ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace('$WORK', working_directory).replace(' ','')
 		results = glob.glob(results_directory + '/*.ms')
@@ -540,7 +564,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slur
 		pass
 
 	## downloading prefactor
-	sandbox = ftp + SBXloc
+	sandbox = SBXloc
 	filename = working_directory + '/prefactor.tar'
 	logging.info('Downloading current prefactor version from \033[35m' + sandbox)
 	download = subprocess.Popen(['globus-url-copy', sandbox , 'file:' + filename], stdout=subprocess.PIPE)
@@ -800,7 +824,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		if is_running(done):
 			logging.info('Checking for a corresponding observation for: \033[35m' + observation)
 			tokens_done = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of done observation
-			observation = check_for_corresponding_observation(observations, observation, tokens_done)
+			observation = check_for_corresponding_observation(observations, observation, server, user, password, database, tokens_done)
 			pass
 		pass
 	
@@ -864,10 +888,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	tokens.add_view(v_name='unpacked', cond=' doc.status == "unpacked" ')
 	tokens.add_view(v_name='submitted', cond=' doc.status == "submitted" ')
 	tokens.add_view(v_name='processing', cond=' doc.status == "processing" ')
+	tokens.add_view(v_name='locked', cond=' doc.lock > 0 ')
 	
-	## check pipelines to run	
+	## check pipelines to run
 	pipelines = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
-	#print locked_pipelines, pipelines_done, pipelines_todo, len(list_todos)
 
 	## check what to download
 	if len(list_todos) > 0 and len(list_done) == 0 and len(pipelines) == 0:
@@ -875,7 +899,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		pass
 
 	## update pipelines to run
+	list_locked = tokens.list_tokens_from_view('locked') # check which tokens of certain type are in the locked state
+	list_todos  = tokens.list_tokens_from_view('todo')   # check which tokens of certain type are in the todo state
 	locked_pipelines = get_pipelines(tokens, list_locked)
+	pipelines_todo   = get_pipelines(tokens, list_todos)
 	pipelines        = list(reversed(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo))))
 	
 	## check errors of the pipelines
@@ -910,6 +937,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	
 	## main pipeline loop
 	for pipeline in pipelines:
+		tokens.add_view(v_name=pipeline, cond=' doc.pipeline == "' + pipeline + '" ')
 		list_pipeline = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
 		status = pipeline_status(tokens, list_pipeline)
 		output = pipeline_output(tokens, list_pipeline)
@@ -951,12 +979,12 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			pass
 		elif status[0] == 'unpacked' or status[0] == 'queued':
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
-			run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slurm_files, pipeline)
+			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline)
 			break
 			pass
 		elif -1 in output:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be resumed.')
-			run_prefactor(tokens, list_pipeline, working_directory, ftp, submitted, slurm_files, pipeline)
+			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline)
 			break
 			pass      
 		else:
