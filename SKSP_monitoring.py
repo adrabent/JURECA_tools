@@ -150,7 +150,7 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo):
 		tokens.add_view(v_name=pipeline_todo, cond=' doc.PIPELINE == "' + pipeline_todo + '" ')
 		if pipeline == pipeline_todo:
 			list_pipeline = tokens.list_tokens_from_view(pipeline_todo)
-			cal_obsid = get_cal_observation_id(tokens_done, list_pipeline)
+			cal_obsid = get_cal_observation_id(tokens, list_pipeline)
 			pass
 		else:
 			list_pipeline = tokens.list_tokens_from_view(pipeline_todo)
@@ -159,8 +159,13 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo):
 		pass
 	
 	obsid = list(set(obsid_list))
-	
-	if len(obsid) > 1 or obsid_list[0] != cal_obsid:
+        
+	if len(obsid) == 0:
+		logging.warning('\033[33mNo corresponding pipeline found for: \033[35m' + cal_obsid)
+		return False                
+		pass
+	elif len(obsid) > 1 or obsid[0] != cal_obsid:
+		logging.warning('\033[33mNo corresponding pipeline found for: \033[35m' + obsid[0])
 		return False
 		pass
 	
@@ -187,6 +192,7 @@ def get_pipelines(tokens, list_locked):
 def find_new_observation(observations, observation_done, server, user, password, database, working_directory):
 
 	for observation in observations:
+		logging.info('Checking observation: \033[35m' + observation)
 		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of certain type
 		list_todos     = tokens.list_tokens_from_view('todo')       # load all todo tokens
 		try:
@@ -1165,7 +1171,7 @@ if __name__=='__main__':
 	logging.info('\033[0mLog file is written to ' + LOG_FILENAME)
 	
 	# start running script
-	main(options.server)
+	main(options.server, options.ftp)
 	
 	# monitoring has been finished
 	logging.info('\033[30;4mMonitoring has been finished.\033[0m')
