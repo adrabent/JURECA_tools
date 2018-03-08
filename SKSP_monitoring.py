@@ -33,7 +33,7 @@ IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
 max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
 max_proc_per_node_limit_var = 6                ## maximal processes per node
-error_tolerance = 1000                         ## number of failed tokens still acceptable for running pipelines
+error_tolerance = 10                           ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 
@@ -412,6 +412,11 @@ def unpack_data(tokens, token_value, filename, working_directory):
 	if errorcode == 0:
 		set_token_status(tokens, token_value, 'unpacked')
 		set_token_progress(tokens, token_value, 0)
+		token = tokens.db[token_value]
+                if 'ABN' in token.keys():
+			freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename.split('.MS')[0] + '.MS' + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+                        update_freq(tokens, token_value, freq)
+                        pass
 		os.remove(filename)
 		logging.info('File \033[35m' + filename + '\033[32m was removed.')
 		pass
@@ -458,6 +463,7 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload):
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], 22)
 			set_token_progress(tokens, item['value'], 'File ' + srm + ' has not been staged yet.')
+			#unlock_token(tokens, item['value'])
 			continue
 			pass
 		logging.info('File \033[35m' + srm + '\033[32m is properly staged.')
@@ -481,12 +487,6 @@ def download_data(url, token_value, working_directory, observation, server, user
 	filename = working_directory + '/' + url.split('/')[-1]
 	download = subprocess.Popen(['globus-url-copy', url, 'file:' + filename], stdout=subprocess.PIPE)
 	errorcode = download.wait()
-	
-	token = tokens.db[token_value]
-	if 'ABN' in token.keys():
-		freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
-		update_freq(tokens, token_value, freq)
-		pass
 	
 	if errorcode == 0:
 		set_token_status(tokens, token_value, 'downloaded')
@@ -654,6 +654,9 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		return 1
 		pass
 	
+	logging.info('Clearing pipeline directory.')
+	shutil.rmtree(working_directory + '/pipeline', ignore_errors = True)
+	
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script(submit_job, parset, working_directory, submitted)
 	
@@ -795,8 +798,9 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			pass
 		if os.path.exists(working_directory + '/pipeline/statefile'):
 			os.remove(working_directory + '/pipeline/statefile')
+			logging.info('Cleaning pipeline directory.')
 			pass
-		logging.info('Statefile was removed.')
+		
 		pass
 	      
 	return 0
@@ -1048,27 +1052,28 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	
 	## main pipeline loop
 	for pipeline in pipelines:
-	  	tokens.add_view(v_name=pipeline, cond=' doc.PIPELINE == "' + pipeline + '" ')                                         ## select all tokens of this pipeline
-	  	tokens.add_view(v_name='temp',   cond=' doc.PIPELINE == "' + pipeline + '" && (doc.output < 20 | doc.output > 22)')  ## select only tokens without download/upload error
-		list_pipeline_all = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
-		list_pipeline     = tokens.list_tokens_from_view('temp')    ## get the pipeline list without download errors
+		tokens.add_view(v_name=pipeline, cond=' doc.PIPELINE == "' + pipeline + '" ')                                        ## select all tokens of this pipeline
+		tokens.add_view(v_name='temp',   cond=' doc.PIPELINE == "' + pipeline + '" && (doc.output < 20 |  doc.output > 22)')  ## select only tokens without download/upload error
+		tokens.add_view(v_name='temp2',  cond=' doc.PIPELINE == "' + pipeline + '" && (doc.output > 19 && doc.output < 23)')  ## select only tokens with    download/upload error
+		list_pipeline_all      = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
+		list_pipeline          = tokens.list_tokens_from_view('temp')    ## get the pipeline list without download errors
+		list_pipeline_download = tokens.list_tokens_from_view('temp2')   ## get the pipeline list with    download errors
 		status = pipeline_status(tokens, list_pipeline_all)
 		output = pipeline_output(tokens, list_pipeline_all)
 		if pipeline in bad_pipelines:
 			logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m show errors. Please check their token status.')
-			if len(list_pipeline_all) - len(list_pipeline) > error_tolerance:
+			if len(list_pipeline_download) > error_tolerance:        ## count download errors and check whether there are too many
 				logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m shows more than ' + str(error_tolerance) + ' errors. Script will try to rerun them.')
-				tokens.reset_tokens(view_name='temp')
-				continue
+				for item in list_pipeline_download:
+					unlock_token(tokens, item['value'])
+					pass                                    
+				break
 				pass
 			pass
 		if len(status) > 1:
 			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m shows more than one status: \033[35m' + str(status) + '\033[33m. Script will try to proceed.')
 			pass
-		if 'todo' in status:
-			logging.warning('\033[33mAll data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available. Check missing files.')
-			pass
-		elif 'submitted' in status:
+		if 'submitted' in status:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m has already been submitted.')
 			if log_information == 'processing':
 				for item in list_pipeline:
@@ -1095,6 +1100,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			tokens.add_view(v_name='temp', cond=' (doc.status == "processed" || doc.output == 31) && doc.PIPELINE == "' + pipeline + '" ')
 			list_done = tokens.list_tokens_from_view('temp')
 			submit_results(tokens, list_done, list_pipeline_all, working_directory, observation, server, pc.user, pc.password, pc.database)
+			tokens.del_view(view_name='temp')
 			continue
 			pass
 		elif 'unpacked' in status or 'queued' in status:
@@ -1112,11 +1118,16 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			run_prefactor(tokens, list_pipeline_all, working_directory, observation, submitted, slurm_files, pipeline, ftp)
 			break
 			pass
+		elif 20 in output or 21 in output or 22 in output:
+			logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
+			continue
+			pass
+
 		else:
 			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m has an invalid status. Script will proceed without it.')
 			pass
-
 		tokens.del_view(view_name='temp')
+		tokens.del_view(view_name='temp2')    
 		pass
 	pass
 	
