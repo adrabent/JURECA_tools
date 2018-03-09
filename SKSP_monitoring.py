@@ -340,6 +340,11 @@ def transfer_data(tokens, token_value, filename, transfer_fn, working_directory)
 	set_token_status(tokens, token_value, 'transferring')
 	set_token_output(tokens, token_value, 0)
 	set_token_progress(tokens, token_value, 'Transfer of data to: ' + transfer_fn)
+	existence = subprocess.Popen(['uberftp', '-ls', transfer_fn])
+	errorcode = existence.wait()
+	if errorcode == 0:
+		subprocess.Popen(['uberftp','-rm', transfer_fn])
+		pass
 	transfer  = subprocess.Popen(['globus-url-copy', 'file:' + filename, transfer_fn], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	
@@ -355,7 +360,7 @@ def transfer_data(tokens, token_value, filename, transfer_fn, working_directory)
 		logging.error('\033[31mTransfer of \033[35m' + filename + '\033[31m failed. Error code: \033[35m' + str(errorcode))
 		set_token_status(tokens, token_value, 'error')
 		set_token_output(tokens, token_value, 31)
-		set_token_progress(tokens, token_value, 'Transfer of ' + str(filename) + ' failed.')
+		set_token_progress(tokens, token_value, 'Transfer of ' + filename.split('/')[-1] + ' failed.')
 		return False
 		pass
 	
@@ -389,6 +394,9 @@ def pack_data(tokens, token_value, filename, to_pack, transfer_fn, pack_director
 		transfer_successful = transfer_data(tokens, token_value, filename, transfer_fn, working_directory)
 		if transfer_successful:
 			if 'prep_cal' in to_pack_list[0]:
+				if os.path.exists(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]):
+					shutil.rmtree(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1], ignore_errors = True)
+					pass
 				shutil.move(to_pack_list[0].split('prep_cal')[0] + 'prep_cal', working_directory + '/.')
 				pass
 			pass
@@ -462,18 +470,12 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload):
 			logging.warning('\033[33mFile \033[35m' + srm + '\033[33m has not been staged yet.')
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], 22)
-			set_token_progress(tokens, item['value'], 'File ' + srm + ' has not been staged yet.')
+			set_token_progress(tokens, item['value'], 'File has not been staged yet.')
 			#unlock_token(tokens, item['value'])
 			continue
 			pass
 		logging.info('File \033[35m' + srm + '\033[32m is properly staged.')
-		status = token_status(tokens, item['value'])
-		if status == 'unpacked' or  status == 'downloaded' or status == 'unpacking' or status == 'downloading':
-			logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already \033[35m' + status)
-			pass
-		else:
-			download_list.append(srm)
-			pass
+		download_list.append(srm)
 		pass
 	
 	return (list_todownload2, download_list)
@@ -532,6 +534,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		skymodel_script      = os.popen('find ' + working_directory + ' | grep download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		os.remove(target_skymodel.replace('$WORK', working_directory))
 		jobfile.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
 		pass
 	except IndexError:
@@ -654,8 +657,8 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		return 1
 		pass
 	
-	logging.info('Clearing pipeline directory.')
-	shutil.rmtree(working_directory + '/pipeline', ignore_errors = True)
+	#logging.info('Removing statefile.')
+	#shutil.rmtree(working_directory + '/pipeline', ignore_errors = True)
 	
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script(submit_job, parset, working_directory, submitted)
@@ -672,9 +675,9 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 	for item in list_pipeline:
 		set_token_status(tokens, item['value'], 'submitted')
 		set_token_output(tokens, item['value'], 0)
-		set_token_progress(tokens, item['value'], 0)
+		#set_token_progress(tokens, item['value'], 0)
 		pass
-	logging.info('Pipeline has been submitted.')
+	logging.info('Pipeline \033[35m' + pipeline + '\033[32m has been submitted.')
 	time.sleep(600)
 	
 	return 0
@@ -725,6 +728,12 @@ def check_submitted_job(slurm_log, submitted):
 	  
 	log_information = os.popen('tail -9 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'ERROR' in log_information:
+		logging.warning(log_information)
+		os.remove(submitted)
+		return log_information
+		pass
+	log_information = os.popen('tail -6 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'Error' in log_information:
 		logging.warning(log_information)
 		os.remove(submitted)
 		return log_information
@@ -783,6 +792,16 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['value'], 99)
 			set_token_progress(tokens, item['value'], log_information[log_information.find('genericpipeline:'):])
 			pass
+		time.sleep(600)
+		pass
+	if 'Error' in log_information:
+		for item in list_pipeline:
+			set_token_status(tokens, item['value'], 'error')
+			set_token_output(tokens, item['value'], 99)
+			set_token_progress(tokens, item['value'], log_information[log_information.find('Error:'):])
+			pass
+		time.sleep(600)
+		pass
 	elif 'finished' in log_information:
 		for i, item in enumerate(list_pipeline):
 			set_token_status(tokens, item['value'], 'processed')
@@ -796,11 +815,12 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 				submit_diagnostic_plots(tokens, item['value'], images)
 				pass
 			pass
+                    
 		if os.path.exists(working_directory + '/pipeline/statefile'):
 			os.remove(working_directory + '/pipeline/statefile')
-			logging.info('Cleaning pipeline directory.')
+			logging.info('Statefile has been removed.')
 			pass
-		
+                    
 		pass
 	      
 	return 0
@@ -815,7 +835,7 @@ def pack_and_transfer(token_value, filename, to_pack, pack_directory, transfer_f
 	pass
       
       
-def submit_results(tokens, list_done, list_pipeline_all, working_directory, observation, server, user, password, database):
+def submit_results(tokens, list_done, working_directory, observation, server, user, password, database):
 
 	parset               = working_directory + '/pipeline.parset'
 	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
@@ -833,9 +853,28 @@ def submit_results(tokens, list_done, list_pipeline_all, working_directory, obse
 		results     = []
 		pass
         
-	# upload calibration results
-	if len(results) > 0:
-		tokens.add_view(v_name=final_pipeline, cond=' doc.PIPELINE == "' + final_pipeline + '" ')
+        tokens.add_view(v_name=final_pipeline, cond=' doc.PIPELINE == "' + final_pipeline + '" ')
+        
+        # upload calibration results
+	if len(instrument_tables) > 0 and len(antenna_tables) > 0 and len(field_tables) > 0:
+		tokens.delete_tokens(final_pipeline)
+		pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+		for item, instrument_table, antenna_table, field_table in zip(list_done, instrument_tables, antenna_tables, field_tables):
+			token        = tokens.db[item['value']]
+			sbnumber     = str(token['STARTSB'])
+			obsid        = str(token['OBSID'])
+			transfer_dir = token['RESULTS_DIR'] + '/' + obsid
+			subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
+			to_pack      = instrument_table + ' ' + antenna_table + ' ' + field_table
+			filename     = working_directory + '/instruments_' + obsid + '_' + sbnumber + '.tar'
+			transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
+			pool2.apply_async(pack_and_transfer, args = (item['value'], filename, to_pack, working_directory + '/pipeline', transfer_fn, working_directory, observation, server, user, password, database,))
+			pass
+		pool2.close()
+		pool2.join()
+		pass
+            
+	elif len(results) > 0:
 		list_final_pipeline = tokens.list_tokens_from_view(final_pipeline)  ## get the final pipeline list
 		if len(list_final_pipeline) == 0:
 			logging.info('Tokens for the final pipeline \033[35m' + final_pipeline + '\033[32m are being created')
@@ -863,10 +902,13 @@ def submit_results(tokens, list_done, list_pipeline_all, working_directory, obse
 				os.system('sed -i "s/! target_input_pattern = ' + obsid + '\*.ms/' + target_input_pattern + '/g " ' + final_parset)
 				pass
                         for item, result in zip(list_done, results):
-                                shutil.move(result, working_directory + '/.')
-                                set_token_output(tokens, item['value'], 0)
-                                lock_token_done(tokens, item['value'])
-                                pass
+				if os.path.exists(working_directory + '/' + result.split('/')[-1]):
+					shutil.rmtree(working_directory + '/' + result.split('/')[-1])
+					pass
+				shutil.move(result, working_directory + '/.')
+				set_token_output(tokens, item['value'], 0)
+				lock_token_done(tokens, item['value'])
+				pass
 			pass
 		else:
 			pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
@@ -879,7 +921,7 @@ def submit_results(tokens, list_done, list_pipeline_all, working_directory, obse
 				freq         = os.popen('taql "select distinct REF_FREQUENCY from ' + result + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
 				ABN          = update_freq(tokens, item['value'], freq)
 				filename     = working_directory + '/GSM_CAL_' + obsid + '_ABN_' + str(ABN) + '.tar.gz'
-				transfer_fn  = transfer_dir + '/' + filename.split('/')[0]
+				transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
 				pool2.apply_async(pack_and_transfer, args = (item['value'], filename, to_pack, working_directory, transfer_fn, working_directory, observation, server, user, password, database,))
 				pass
 			pool2.close()
@@ -890,6 +932,7 @@ def submit_results(tokens, list_done, list_pipeline_all, working_directory, obse
 		pass
 	
 	elif len(calibration_h5) == 1 and len(calibration_npy) > 0:
+		tokens.delete_tokens(final_pipeline)
 		for item in list_done:
 			token = tokens.db[item['value']]
 			break
@@ -899,25 +942,8 @@ def submit_results(tokens, list_done, list_pipeline_all, working_directory, obse
 		to_pack      = calibration_h5[0] + ' ' + ' '.join(calibration_npy)
 		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
 		filename     = working_directory + '/' + obsid + '.tar'
-		transfer_fn  = transfer_dir + '/' + filename.split('/')[0]
+		transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
 		pack_and_transfer(item['value'], filename, to_pack, working_directory, transfer_fn, working_directory, observation, server, user, password, database)
-		pass
-	
-	elif len(instrument_tables) > 0 and len(antenna_tables) > 0 and len(field_tables) > 0:
-		pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
-		for item, instrument_table, antenna_table, field_table in zip(list_done, instrument_tables, antenna_tables, field_tables):
-			token        = tokens.db[item['value']]
-			sbnumber     = str(token['STARTSB'])
-			obsid        = str(token['OBSID'])
-			transfer_dir = token['RESULTS_DIR'] + '/' + obsid
-			subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
-			to_pack      = instrument_table + ' ' + antenna_table + ' ' + field_table
-			filename     = working_directory + '/instruments_' + obsid + '_' + sbnumber + '.tar'
-			transfer_fn  = transfer_dir + '/' + filename.split('/')[0]
-			pool2.apply_async(pack_and_transfer, args = (item['value'], filename, to_pack, working_directory + '/pipeline', transfer_fn, working_directory, observation, server, user, password, database,))
-			pass
-		pool2.close()
-		pool2.join()
 		pass
 	
 	logging.info('Submitting results has been finished.')
@@ -994,7 +1020,6 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	
 	## load token of chosen design document
 	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
-	#tokens.del_view(view_name='pref_targ2')
 	
 	## add views for users
 	tokens.add_view(v_name='downloading', cond=' doc.status == "downloading" ')
@@ -1014,10 +1039,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		
 	## check which pipelines are locked, done or show errors
 	try:
-		locked_pipelines    = get_pipelines(tokens, list_locked)
-		bad_pipelines       = get_pipelines(tokens, list_error)
-		pipelines_done      = get_pipelines(tokens, list_done)
-		pipelines_todo      = get_pipelines(tokens, list_todos)
+		locked_pipelines    = sorted(list(set(get_pipelines(tokens, list_locked))))
+		bad_pipelines       = sorted(list(set(get_pipelines(tokens, list_error ))))
+		pipelines_done      = sorted(list(set(get_pipelines(tokens, list_done  ))))
+		pipelines_todo      = sorted(list(set(get_pipelines(tokens, list_todos ))))
 	except TypeError:
 		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors or remove the last observation.')
 		return 1
@@ -1027,7 +1052,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	subprocess.Popen(['touch', lock_file])
 	
 	## check pipelines to run
-	pipelines = sorted(list(set(locked_pipelines) - set(pipelines_done) - set(pipelines_todo)))
+	#pipelines = sorted(list(set(locked_pipelines) - set(pipelines_done) -set(pipelines_todo)))
+	pipelines = sorted(list(set(locked_pipelines) - set(pipelines_todo)))
 
 	## check what to download
 	if len(list_todos) > 0:
@@ -1044,7 +1070,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	## check which pipelines are done and if observation is finished
 	if len(pipelines_done) > 0:
 		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m are done.')
-		if len(pipelines) == 0 and len(pipelines_todo) == 0:
+		#if len(pipelines) == 0 and len(pipelines_todo) == 0:
+		if pipelines == pipelines_done and len(pipelines_todo) == 0:
 			logging.info('\033[0mObservation \033[35m' + observation + ' \033[0m is done.')
 			subprocess.Popen(['touch', done])
 			pass
@@ -1099,8 +1126,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			logging.info('\033[0mPipeline \033[35m' + pipeline + ' \033[0m for this observation has been processed.')
 			tokens.add_view(v_name='temp', cond=' (doc.status == "processed" || doc.output == 31) && doc.PIPELINE == "' + pipeline + '" ')
 			list_done = tokens.list_tokens_from_view('temp')
-			submit_results(tokens, list_done, list_pipeline_all, working_directory, observation, server, pc.user, pc.password, pc.database)
-			tokens.del_view(view_name='temp')
+			submit_results(tokens, list_done, working_directory, observation, server, pc.user, pc.password, pc.database)
 			continue
 			pass
 		elif 'unpacked' in status or 'queued' in status:
@@ -1113,28 +1139,28 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
 			break
 			pass
-		elif len(list_pipeline_all) == 1 and output[0] == 20:
+		elif len(list_pipeline_all) == 1 and output[0] == 22:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
 			run_prefactor(tokens, list_pipeline_all, working_directory, observation, submitted, slurm_files, pipeline, ftp)
 			break
+			pass
+                elif 'transferred' in status:
+			continue
 			pass
 		elif 20 in output or 21 in output or 22 in output:
 			logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
 			continue
 			pass
-
 		else:
 			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m has an invalid status. Script will proceed without it.')
 			pass
-		tokens.del_view(view_name='temp')
-		tokens.del_view(view_name='temp2')    
 		pass
-	pass
-	
-      
+	 
 	## last check
-	if len(pipelines) == 0 and len(pipelines_todo) == 0:
+	#if len(pipelines) == 0 and len(pipelines_todo) == 0:
+	if pipelines == pipelines_done and len(pipelines_todo) == 0:
 		logging.info('\033[0mNo tokens found in database to be processed.')
+		time.sleep(300)
 		pass
 	 
 	## wait for processes to be finished
@@ -1144,7 +1170,9 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	except UnboundLocalError:
 		pass
 	
-	## remove the lock file 
+	## remove the lock file and clear the database
+        tokens.del_view(view_name='temp')
+	tokens.del_view(view_name='temp2')   
 	os.remove(lock_file)
 	
 	return 0
