@@ -27,7 +27,7 @@ from GRID_LRT.couchdb.client import Server
 
 _version = '0.5beta'                           ## program version
 nodes = 23                                     ## number of JURECA nodes (higher number leads to higher queueing time)
-walltime = '01:00:00'                          ## walltime for the JURECA queue
+walltime = '02:00:00'                          ## walltime for the JURECA queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
@@ -36,6 +36,7 @@ max_proc_per_node_limit_var = 6                ## maximal processes per node
 error_tolerance = 10                           ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
+#no_pipelines = 4                               ## number of pipelines to do
 
 
 os.system('clear')
@@ -399,6 +400,12 @@ def pack_data(tokens, token_value, filename, to_pack, transfer_fn, pack_director
 					pass
 				shutil.move(to_pack_list[0].split('prep_cal')[0] + 'prep_cal', working_directory + '/.')
 				pass
+			if 'pre-cal' in to_pack_list[0]:
+				if os.path.exists(working_directory + '/' + to_pack_list[0].split('/')[-1]):
+					shutil.rmtree(working_directory + '/' + to_pack_list[0].split('/')[-1], ignore_errors = True)
+					pass
+				shutil.move(to_pack_list[0], working_directory + '/.')
+				pass
 			pass
 		pass
 	else:
@@ -523,7 +530,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	
 	## extracting directories for IONEX and the TGSS ADR skymodel
 	try:
-		IONEX_script         = os.popen('find ' + working_directory + ' | grep download_IONEX.py').readlines()[0].rstrip('\n').replace(' ','')
+		IONEX_script         = os.popen('find ' + working_directory + ' -name download_IONEX.py ').readlines()[0].rstrip('\n').replace(' ','')
 		IONEX_path           = os.popen('grep ionex_path '           + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		jobfile.write(IONEX_script + ' --destination ' + IONEX_path + ' --server ' + IONEX_server + ' ' + working_directory + '/' + target_input_pattern + '\n')
@@ -531,7 +538,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	except IndexError:
 		pass
 	try:
-		skymodel_script      = os.popen('find ' + working_directory + ' | grep download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
+		skymodel_script      = os.popen('find ' + working_directory + ' -name download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		os.remove(target_skymodel.replace('$WORK', working_directory))
@@ -807,13 +814,17 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_status(tokens, item['value'], 'processed')
 			set_token_output(tokens, item['value'], 0)
 			set_token_progress(tokens, item['value'], log_information[log_information.find('genericpipeline:'):])
-			images = glob.glob(inspection_directory + '/*.png')
+			images  = sorted(glob.glob(inspection_directory + '/*.png'))
+			images2 = sorted(glob.glob(working_directory + '/pipeline/*.png'))
 			if i < len(list_pipeline) - 1:
 				submit_diagnostic_plots(tokens, item['value'], images[:1])
 				pass
 			else:
 				submit_diagnostic_plots(tokens, item['value'], images)
 				pass
+                        for image in images2:
+                                os.remove(image)
+                                pass
 			pass
                     
 		if os.path.exists(working_directory + '/pipeline/statefile'):
@@ -1071,9 +1082,20 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	if len(pipelines_done) > 0:
 		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m are done.')
 		#if len(pipelines) == 0 and len(pipelines_todo) == 0:
-		if pipelines == pipelines_done and len(pipelines_todo) == 0:
+		#if pipelines == pipelines_done and len(pipelines_todo) == 0:
+		#if len(pipelines_done) == no_pipelines and len(pipelines_todo) == 0:
+		if set(pipelines) < set(pipelines_done) and len(pipelines_todo) == 0:
 			logging.info('\033[0mObservation \033[35m' + observation + ' \033[0m is done.')
-			subprocess.Popen(['touch', done])
+			if not is_running(done):
+				tokens.del_view(view_name='downloading')
+				tokens.del_view(view_name='unpacking')
+				tokens.del_view(view_name='unpacked')
+				tokens.del_view(view_name='submitted')
+				tokens.del_view(view_name='processing')
+				tokens.del_view(view_name='processed')
+				tokens.del_view(view_name='transferring')
+				subprocess.Popen(['touch', done])
+				pass
 			pass
 		pass
 	
@@ -1158,7 +1180,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	 
 	## last check
 	#if len(pipelines) == 0 and len(pipelines_todo) == 0:
-	if pipelines == pipelines_done and len(pipelines_todo) == 0:
+	#if len(pipelines_done) == no_pipelines and len(pipelines_todo) == 0:
+	if set(pipelines) <= set(pipelines_done) and len(pipelines_todo) == 0:
 		logging.info('\033[0mNo tokens found in database to be processed.')
 		time.sleep(300)
 		pass
