@@ -12,6 +12,7 @@ import resource
 import optparse
 import glob
 import shutil
+import math
 
 import time, datetime
 import subprocess
@@ -27,7 +28,7 @@ from GRID_LRT.couchdb.client import Server
 
 _version = '0.5beta'                           ## program version
 nodes = 23                                     ## number of JURECA nodes (higher number leads to higher queueing time)
-walltime = '02:00:00'                          ## walltime for the JURECA queue
+walltime = '01:00:00'                          ## walltime for the JURECA queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
@@ -36,7 +37,6 @@ max_proc_per_node_limit_var = 6                ## maximal processes per node
 error_tolerance = 10                           ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
-#no_pipelines = 4                               ## number of pipelines to do
 
 
 os.system('clear')
@@ -664,9 +664,6 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		return 1
 		pass
 	
-	#logging.info('Removing statefile.')
-	#shutil.rmtree(working_directory + '/pipeline', ignore_errors = True)
-	
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script(submit_job, parset, working_directory, submitted)
 	
@@ -682,7 +679,6 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 	for item in list_pipeline:
 		set_token_status(tokens, item['value'], 'submitted')
 		set_token_output(tokens, item['value'], 0)
-		#set_token_progress(tokens, item['value'], 0)
 		pass
 	logging.info('Pipeline \033[35m' + pipeline + '\033[32m has been submitted.')
 	time.sleep(600)
@@ -838,6 +834,29 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 	pass
 
 
+def slice_dicts(srmdict, slice_size = 10):
+
+	srmdict = dict(srmdict)
+
+	keys  = sorted(srmdict.keys())
+	start = int(keys[0] )
+	end   = int(keys[-1])
+
+	sliced={}
+    
+	for chunk in range(0, int(math.ceil((end - start) / float(slice_size)))):
+		chunk_name = format(start + chunk * slice_size, '03')
+		sliced[chunk_name] = []
+		for i in range(slice_size):
+			if format(start + chunk * slice_size + i,'03') in srmdict.keys():
+				sliced[chunk_name].append(srmdict[format(start + chunk * slice_size + i, '03')])
+				pass
+			pass
+		pass
+
+	return sliced
+	pass
+
 def pack_and_transfer(token_value, filename, to_pack, pack_directory, transfer_fn, working_directory, observation, server, user, password, database):
   
 	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of done observation
@@ -893,18 +912,21 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 			final_config   = home_directory + '/' + final_pipeline + '.cfg'
 			final_parset   = home_directory + '/' + final_pipeline + '.parset'
 			ts             = Token.TokenSet(tokens, tok_config = final_config)
-			s_list         = srmlist.srmlist()
+			s_list         = {}
 			obsid          = get_observation_id(tokens, list_done)
 			for item in list_done:
+				token = tokens.db[item['value']]
+				ABN   = str(token['ABN'])
 				srm = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
-				s_list.append(srm)
+				s_list[ABN] = srm
 				pass
-			sbns = srmlist.slice_dicts(s_list.sbn_dict(), slice_size = num_SBs_per_group_var)
-			ts.create_dict_tokens(iterable = sbns, id_append=final_pipeline + '_' + obsid, key_name='start_SB', file_upload='srm.txt')
+			ABNs = slice_dicts(s_list, slice_size = num_SBs_per_group_var)
+			ts.create_dict_tokens(iterable = ABNs, id_prefix = 'ABN', id_append = final_pipeline + '_' + obsid, key_name = 'ABN', file_upload = 'srm.txt')
 			list_final_pipeline = tokens.list_tokens_from_view(final_pipeline)  ## get the final pipeline list again
 			for item in list_final_pipeline:
 				token = tokens.db[item['value']]
 				token['OBSID'] = obsid
+				#token['ABN']   = ABN
 				tokens.db.update([token])
 				target_input_pattern = os.popen('grep "! target_input_pattern" ' + final_parset).readlines()[0].rstrip('\n').replace('/','\/')
 				os.system('sed -i "s/' + target_input_pattern + '/! target_input_pattern = ' + obsid + '\*.ms/g " ' + final_parset)
@@ -926,11 +948,12 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 			for result, item in zip(results, list_done):
 				token        = tokens.db[item['value']]
 				obsid        = str(token['OBSID'])
+				ABN          = str(token['ABN'])
 				transfer_dir = token['RESULTS_DIR'] + '/' + obsid
 				to_pack      = result
 				subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
-				freq         = os.popen('taql "select distinct REF_FREQUENCY from ' + result + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
-				ABN          = update_freq(tokens, item['value'], freq)
+				#freq         = os.popen('taql "select distinct REF_FREQUENCY from ' + result + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+				#ABN          = update_freq(tokens, item['value'], freq)
 				filename     = working_directory + '/GSM_CAL_' + obsid + '_ABN_' + str(ABN) + '.tar.gz'
 				transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
 				pool2.apply_async(pack_and_transfer, args = (item['value'], filename, to_pack, working_directory, transfer_fn, working_directory, observation, server, user, password, database,))
@@ -1063,7 +1086,6 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	subprocess.Popen(['touch', lock_file])
 	
 	## check pipelines to run
-	#pipelines = sorted(list(set(locked_pipelines) - set(pipelines_done) -set(pipelines_todo)))
 	pipelines = sorted(list(set(locked_pipelines) - set(pipelines_todo)))
 
 	## check what to download
@@ -1081,21 +1103,16 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	## check which pipelines are done and if observation is finished
 	if len(pipelines_done) > 0:
 		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m are done.')
-		#if len(pipelines) == 0 and len(pipelines_todo) == 0:
-		#if pipelines == pipelines_done and len(pipelines_todo) == 0:
-		#if len(pipelines_done) == no_pipelines and len(pipelines_todo) == 0:
 		if set(pipelines) < set(pipelines_done) and len(pipelines_todo) == 0:
 			logging.info('\033[0mObservation \033[35m' + observation + ' \033[0m is done.')
-			if not is_running(done):
-				tokens.del_view(view_name='downloading')
-				tokens.del_view(view_name='unpacking')
-				tokens.del_view(view_name='unpacked')
-				tokens.del_view(view_name='submitted')
-				tokens.del_view(view_name='processing')
-				tokens.del_view(view_name='processed')
-				tokens.del_view(view_name='transferring')
-				subprocess.Popen(['touch', done])
-				pass
+			tokens.del_view(view_name='downloading')
+			tokens.del_view(view_name='unpacking')
+			tokens.del_view(view_name='unpacked')
+			tokens.del_view(view_name='submitted')
+			tokens.del_view(view_name='processing')
+			tokens.del_view(view_name='processed')
+			tokens.del_view(view_name='transferring')
+			subprocess.Popen(['touch', done])
 			pass
 		pass
 	
@@ -1178,9 +1195,11 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			pass
 		pass
 	 
+	## clear database
+	tokens.del_view(view_name='temp')
+	tokens.del_view(view_name='temp2')
+	
 	## last check
-	#if len(pipelines) == 0 and len(pipelines_todo) == 0:
-	#if len(pipelines_done) == no_pipelines and len(pipelines_todo) == 0:
 	if set(pipelines) <= set(pipelines_done) and len(pipelines_todo) == 0:
 		logging.info('\033[0mNo tokens found in database to be processed.')
 		time.sleep(300)
@@ -1194,8 +1213,6 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		pass
 	
 	## remove the lock file and clear the database
-        tokens.del_view(view_name='temp')
-	tokens.del_view(view_name='temp2')   
 	os.remove(lock_file)
 	
 	return 0
