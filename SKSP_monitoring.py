@@ -34,7 +34,7 @@ IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
 max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
 max_proc_per_node_limit_var = 6                ## maximal processes per node
-error_tolerance = 10                           ## number of failed tokens still acceptable for running pipelines
+error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 
@@ -92,8 +92,13 @@ def get_observations_todo(user, password, database, designs, server):
 	for design in designs:
 		tokens     = Token.Token_Handler( t_type=design, srv=server, uname=user, pwd=password, dbn=database)
 		list_todos = tokens.list_tokens_from_view('todo')
-		if len(list_todos) > 0:
-			observations.append(design)
+		try:
+			if len(list_todos) > 0:
+				observations.append(design)
+				pass
+		except TypeError:
+			logging.warning('\033[33mObservation \033[35m' + design + '\033[33m is invalid.')
+			continue
 			pass
 		pass
 	
@@ -1057,11 +1062,12 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	
 	## add views for users
 	tokens.add_view(v_name='downloading', cond=' doc.status == "downloading" ')
-	tokens.add_view(v_name='unpacking',   cond=' doc.status == "unpacking" ')
-	tokens.add_view(v_name='unpacked',    cond=' doc.status == "unpacked" ')
-	tokens.add_view(v_name='submitted',   cond=' doc.status == "submitted" ')
-	tokens.add_view(v_name='processing',  cond=' doc.status == "processing" ')
-	tokens.add_view(v_name='processed',  cond=' doc.status == "processed" ')
+	tokens.add_view(v_name='unpacking',   cond=' doc.status == "unpacking" '  )
+	tokens.add_view(v_name='unpacked',    cond=' doc.status == "unpacked" '   )
+	tokens.add_view(v_name='submitted',   cond=' doc.status == "submitted" '  )
+	tokens.add_view(v_name='processing',  cond=' doc.status == "processing" ' )
+	tokens.add_view(v_name='processed',   cond=' doc.status == "processed" '  )
+	tokens.add_view(v_name='packing',     cond=' doc.status == "packing" '    )
 	tokens.add_view(v_name='transferring',  cond=' doc.status == "transferring" ')
 	tokens.add_view(v_name='done', cond=' doc.done > 0  && doc.output == 0')	
 	
@@ -1078,7 +1084,8 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		pipelines_done      = sorted(list(set(get_pipelines(tokens, list_done  ))))
 		pipelines_todo      = sorted(list(set(get_pipelines(tokens, list_todos ))))
 	except TypeError:
-		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors or remove the last observation.')
+		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors. Script will check for new observations in the next run.')
+		os.remove(last_observation)
 		return 1
 		pass
 	
@@ -1111,6 +1118,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			tokens.del_view(view_name='submitted')
 			tokens.del_view(view_name='processing')
 			tokens.del_view(view_name='processed')
+			tokens.del_view(view_name='packing')
 			tokens.del_view(view_name='transferring')
 			subprocess.Popen(['touch', done])
 			pass
@@ -1118,7 +1126,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	
 	## main pipeline loop
 	for pipeline in pipelines:
-		tokens.add_view(v_name=pipeline, cond=' doc.PIPELINE == "' + pipeline + '" ')                                        ## select all tokens of this pipeline
+		tokens.add_view(v_name=pipeline, cond=' doc.PIPELINE == "' + pipeline + '" ')                                         ## select all tokens of this pipeline
 		tokens.add_view(v_name='temp',   cond=' doc.PIPELINE == "' + pipeline + '" && (doc.output < 20 |  doc.output > 22)')  ## select only tokens without download/upload error
 		tokens.add_view(v_name='temp2',  cond=' doc.PIPELINE == "' + pipeline + '" && (doc.output > 19 && doc.output < 23)')  ## select only tokens with    download/upload error
 		list_pipeline_all      = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
@@ -1235,7 +1243,6 @@ if __name__=='__main__':
 	log.emit = add_coloring_to_emit_ansi(log.emit)
 	logging.root.addHandler(log)
 	
-	#pwd            = os.getcwd()
 	home_directory = os.environ['HOME']
 	LOG_FILENAME = home_directory + '/logs/' + str(datetime.datetime.utcnow().replace(microsecond=0).isoformat()) + '.log'
 	if not os.path.exists(home_directory + '/logs'):
@@ -1250,7 +1257,13 @@ if __name__=='__main__':
 	logging.info('\033[0mLog file is written to ' + LOG_FILENAME)
 	
 	# start running script
-	main(options.server, options.ftp)
+	try:
+		main(options.server, options.ftp)
+		pass
+	except AttributeError:
+		logging.warning('\033[33mAccess to database was interrupted. Script will restart.')
+		os.remove(os.environ['WORK'] + '/.lock')
+		pass
 	
 	# monitoring has been finished
 	logging.info('\033[30;4mMonitoring has been finished.\033[0m')
