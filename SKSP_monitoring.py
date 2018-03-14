@@ -74,6 +74,14 @@ def add_coloring_to_emit_ansi(fn):
 	pass
 
 
+def my_handler(type, value, tb):
+	exception = logger.critical("Uncaught exception: {0}".format(str(value)))
+	lock = os.environ['WORK'] + '/.lock'
+	if os.path.exists(lock):
+		os.remove(lock)
+		pass
+	pass
+
 def load_design_documents(database):
   
 	designs = []
@@ -1147,7 +1155,16 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		if len(status) > 1:
 			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m shows more than one status: \033[35m' + str(status) + '\033[33m. Script will try to proceed.')
 			pass
-		if 'submitted' in status:
+		if len(status) > 2 and ('downloading' in status or 'downloaded' in status or 'unpacking' in status or 'queued' in status):
+			logging.warning('\033[33mPipeline \033[35m' + pipeline + ' \033[0m for this observation was probably interrupted.')
+			tokens.add_view(v_name='temp', cond=' (doc.status == "downloading" || doc.status == "downloaded" || doc.status == "unpacking" || doc.status == "queued") && doc.PIPELINE == "' + pipeline + '" ')
+			list_interrupted = tokens.list_tokens_from_view('temp')
+			for item in list_pipeline_download:
+				unlock_token(tokens, item['value'])
+				break
+				pass
+			pass
+		elif 'submitted' in status:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m has already been submitted.')
 			if log_information == 'processing':
 				for item in list_pipeline:
@@ -1252,18 +1269,16 @@ if __name__=='__main__':
 	logfile.setFormatter(format_file)
 	logfile.emit = add_coloring_to_emit_ansi(logfile.emit)
 	logging.root.addHandler(logfile)
-
-	#logging.info('\033[0mYou are starting the script from ' + pwd)
+	
+	# install exception handler
+	logger = logging.getLogger(LOG_FILENAME)
+	sys.excepthook = my_handler
+	
+	# location of logfile
 	logging.info('\033[0mLog file is written to ' + LOG_FILENAME)
 	
 	# start running script
-	try:
-		main(options.server, options.ftp)
-		pass
-	except AttributeError:
-		logging.warning('\033[33mAccess to database was interrupted. Script will restart.')
-		os.remove(os.environ['WORK'] + '/.lock')
-		pass
+	main(options.server, options.ftp)
 	
 	# monitoring has been finished
 	logging.info('\033[30;4mMonitoring has been finished.\033[0m')
