@@ -75,7 +75,8 @@ def add_coloring_to_emit_ansi(fn):
 
 
 def my_handler(type, value, tb):
-	exception = logger.critical("Uncaught exception: {0}".format(str(value)))
+	exception = logger.critical("{0}".format(str(value)))
+	time.sleep(300)
 	lock = os.environ['WORK'] + '/.lock'
 	if os.path.exists(lock):
 		os.remove(lock)
@@ -408,8 +409,9 @@ def pack_data(tokens, token_value, filename, to_pack, transfer_fn, pack_director
 		transfer_successful = transfer_data(tokens, token_value, filename, transfer_fn, working_directory)
 		if transfer_successful:
 			if 'prep_cal' in to_pack_list[0]:
-				if os.path.exists(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]):
-					shutil.rmtree(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1], ignore_errors = True)
+				logging.error(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1] + 'prep_cal')
+				if os.path.exists(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]+ 'prep_cal'):
+					shutil.rmtree(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]+ 'prep_cal', ignore_errors = True)
 					pass
 				shutil.move(to_pack_list[0].split('prep_cal')[0] + 'prep_cal', working_directory + '/.')
 				pass
@@ -441,10 +443,10 @@ def unpack_data(tokens, token_value, filename, working_directory):
 		set_token_status(tokens, token_value, 'unpacked')
 		set_token_progress(tokens, token_value, 0)
 		token = tokens.db[token_value]
-                if 'ABN' in token.keys():
+		if 'ABN' in token.keys():
 			freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename.split('.MS')[0] + '.MS' + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
-                        update_freq(tokens, token_value, freq)
-                        pass
+			update_freq(tokens, token_value, freq)
+			pass
 		os.remove(filename)
 		logging.info('File \033[35m' + filename + '\033[32m was removed.')
 		pass
@@ -457,7 +459,7 @@ def unpack_data(tokens, token_value, filename, working_directory):
 	pass
 
 
-def prepare_downloads(tokens, list_todos, pipeline_todownload):
+def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory):
   
 	download_list    = srmlist.srmlist() # create list to download
 	list_todownload  = [item for item in list_todos if tokens.db[item['value']]['PIPELINE'] == pipeline_todownload] # filter list to a certain pipeline
@@ -468,7 +470,22 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload):
 	for item in list_todownload:
 		lock_token(tokens, item['value'])
 		try:
-			srm = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
+			srm      = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
+			filename = working_directory + '/' + '_'.join(item['value'].split('_')[-2:]) + '_uv.MS'
+			if os.path.exists(filename):
+				logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already on disk.')
+				lock_token(tokens, item['value'])
+				set_token_status(tokens, item['value'], 'unpacked')
+				set_token_progress(tokens, item['value'], 0)
+				token = tokens.db[item['value']]
+				if 'ABN' in token.keys():
+					freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+					update_freq(tokens, item['value'], freq)
+					pass
+				continue
+				pass
+			#logging.info("Appended things " + item['value'] + ' to ' + srm)
+			#time.sleep(5)
 			srm_list.append(srm)
 			list_todownload2.append(item)
 		except AttributeError:
@@ -481,8 +498,11 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload):
 		pass
 
 	## check whether data is staged
+	logging.info('Checking staging status.')
 	pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 	is_staged_list = pool.map(is_staged, srm_list)
+	
+	list_todownload = []
 	
 	for i, item in enumerate(list_todownload2):
 		srm = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
@@ -494,11 +514,15 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload):
 			#unlock_token(tokens, item['value'])
 			continue
 			pass
+      
 		logging.info('File \033[35m' + srm + '\033[32m is properly staged.')
+		#logging.error("Appended things " + item['value'] + ' to ' + srm)
+		#time.sleep(2)
 		download_list.append(srm)
+		list_todownload.append(item)
 		pass
 	
-	return (list_todownload2, download_list)
+	return (list_todownload, download_list)
 	pass
      
      
@@ -553,8 +577,10 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	try:
 		skymodel_script      = os.popen('find ' + working_directory + ' -name download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		os.remove(target_skymodel.replace('$WORK', working_directory))
+		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
+		if os.path.exists(target_skymodel):
+			os.remove(target_skymodel)
+			pass
 		jobfile.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
 		pass
 	except IndexError:
@@ -810,7 +836,7 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			pass
 		time.sleep(600)
 		pass
-	if 'Error' in log_information:
+	elif 'Error' in log_information:
 		for item in list_pipeline:
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], 99)
@@ -831,9 +857,9 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			else:
 				submit_diagnostic_plots(tokens, item['value'], images)
 				pass
-                        for image in images2:
-                                os.remove(image)
-                                pass
+			for image in images2:
+				os.remove(image)
+				pass
 			pass
                     
 		if os.path.exists(working_directory + '/pipeline/statefile'):
@@ -878,7 +904,7 @@ def pack_and_transfer(token_value, filename, to_pack, pack_directory, transfer_f
 	pass
       
       
-def submit_results(tokens, list_done, working_directory, observation, server, user, password, database):
+def submit_results(tokens, list_done, working_directory, observation, server, user, password, database, pipeline):
 
 	parset               = working_directory + '/pipeline.parset'
 	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
@@ -896,9 +922,9 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 		results     = []
 		pass
         
-        tokens.add_view(v_name=final_pipeline, cond=' doc.PIPELINE == "' + final_pipeline + '" ')
+	tokens.add_view(v_name=final_pipeline, cond=' doc.PIPELINE == "' + final_pipeline + '" ')
         
-        # upload calibration results
+	# upload calibration results
 	if len(instrument_tables) > 0 and len(antenna_tables) > 0 and len(field_tables) > 0:
 		tokens.delete_tokens(final_pipeline)
 		pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
@@ -918,8 +944,14 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 		pass
             
 	elif len(results) > 0:
-		list_final_pipeline = tokens.list_tokens_from_view(final_pipeline)  ## get the final pipeline list
-		if len(list_final_pipeline) == 0:
+		tokens.add_view(v_name='temp2', cond=' doc.PIPELINE == "' + pipeline + '" && doc.done > 0')   ## select only tokens of pipeline which are done
+		list_pipeline_done = tokens.list_tokens_from_view('temp2')                                    ## get the pipeline list
+		#logging.error(pipeline + ' ' + final_pipeline)
+		if pipeline != final_pipeline and len(list_pipeline_done) == 0:
+			list_final_pipeline = tokens.list_tokens_from_view(final_pipeline)                        ## get the final pipeline list
+			if len(list_final_pipeline) > 0:
+				tokens.delete_tokens(final_pipeline)
+				pass
 			logging.info('Tokens for the final pipeline \033[35m' + final_pipeline + '\033[32m are being created')
 			home_directory = os.environ['HOME']
 			final_config   = home_directory + '/' + final_pipeline + '.cfg'
@@ -947,7 +979,7 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				lock_token(tokens, item['value'])
 				os.system('sed -i "s/! target_input_pattern = ' + obsid + '\*.ms/' + target_input_pattern + '/g " ' + final_parset)
 				pass
-                        for item, result in zip(list_done, results):
+			for item, result in zip(list_done, results):
 				if os.path.exists(working_directory + '/' + result.split('/')[-1]):
 					shutil.rmtree(working_directory + '/' + result.split('/')[-1])
 					pass
@@ -956,7 +988,7 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				lock_token_done(tokens, item['value'])
 				pass
 			pass
-		else:
+		elif pipeline == final_pipeline:
 			pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 			for result, item in zip(results, list_done):
 				token        = tokens.db[item['value']]
@@ -974,11 +1006,13 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 			pool2.close()
 			pool2.join()
 			pass
-		      
-		return 0
 		pass
-	
-	elif len(calibration_h5) == 1 and len(calibration_npy) > 0:
+    
+	elif len(calibration_h5) == 1 and len(calibration_npy) > 0 and condition not in pipeline:
+		h5parms = glob.glob(working_directory + '/pipeline/*.h5')
+		for h5parm in h5parms:
+			os.remove(h5parm)
+			pass
 		tokens.delete_tokens(final_pipeline)
 		for item in list_done:
 			token = tokens.db[item['value']]
@@ -993,12 +1027,12 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 		pack_and_transfer(item['value'], filename, to_pack, working_directory, transfer_fn, working_directory, observation, server, user, password, database)
 		pass
 	
-	logging.info('Submitting results has been finished.')
+	logging.info('Submitting results for ' + pipeline + '\033[32m has been finished.')
 	return 0
 	pass
 
 
-def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/sandbox/'):
+def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/sandbox/'):
 	
 	## load working environment
 	working_directory = os.environ['WORK']
@@ -1105,7 +1139,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 
 	## check what to download
 	if len(list_todos) > 0:
-		(list_todownload, download_list) = prepare_downloads(tokens, list_todos, pipelines_todo[0])
+		if os.path.exists(done):
+			os.remove(done)
+			pass
+		(list_todownload, download_list) = prepare_downloads(tokens, list_todos, pipelines_todo[0], working_directory)
 		gsilist   = download_list.gsi_links() # convert the srm list to a GSI list (proper URLs for GRID download)
 		gsilist   = sorted(list(set(gsilist))) # to re-reverse the list in order to match it for the upcoming loop and use only distinct files
 		pool      = multiprocessing.Pool(processes = multiprocessing.cpu_count())
@@ -1143,7 +1180,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		status = pipeline_status(tokens, list_pipeline_all)
 		output = pipeline_output(tokens, list_pipeline_all)
 		if pipeline in bad_pipelines:
-			logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m show errors. Please check their token status.')
+			logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m shows errors. Please check its token status.')
 			if len(list_pipeline_download) > error_tolerance:        ## count download errors and check whether there are too many
 				logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m shows more than ' + str(error_tolerance) + ' errors. Script will try to rerun them.')
 				for item in list_pipeline_download:
@@ -1155,14 +1192,10 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 		if len(status) > 1:
 			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m shows more than one status: \033[35m' + str(status) + '\033[33m. Script will try to proceed.')
 			pass
-		if len(status) > 2 and ('downloading' in status or 'downloaded' in status or 'unpacking' in status or 'queued' in status):
-			logging.warning('\033[33mPipeline \033[35m' + pipeline + ' \033[0m for this observation was probably interrupted.')
-			tokens.add_view(v_name='temp', cond=' (doc.status == "downloading" || doc.status == "downloaded" || doc.status == "unpacking" || doc.status == "queued") && doc.PIPELINE == "' + pipeline + '" ')
-			list_interrupted = tokens.list_tokens_from_view('temp')
-			for item in list_pipeline_download:
-				unlock_token(tokens, item['value'])
-				break
-				pass
+		if len(status) > 2:
+			logging.warning('\033[33mPipeline \033[35m' + pipeline + ' \033[33m for this observation is broken. Tokens will be reset.')
+			tokens.reset_tokens(view_name=pipeline)
+			break
 			pass
 		elif 'submitted' in status:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m has already been submitted.')
@@ -1190,7 +1223,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			logging.info('\033[0mPipeline \033[35m' + pipeline + ' \033[0m for this observation has been processed.')
 			tokens.add_view(v_name='temp', cond=' (doc.status == "processed" || doc.output == 31) && doc.PIPELINE == "' + pipeline + '" ')
 			list_done = tokens.list_tokens_from_view('temp')
-			submit_results(tokens, list_done, working_directory, observation, server, pc.user, pc.password, pc.database)
+			submit_results(tokens, list_done, working_directory, observation, server, pc.user, pc.password, pc.database, pipeline)
 			continue
 			pass
 		elif 'unpacked' in status or 'queued' in status:
@@ -1216,7 +1249,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 			continue
 			pass
 		else:
-			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m has an invalid status. Script will proceed without it.')
+			logging.error('\033[31mPipeline \033[35m' + pipeline + '\033[31m has an invalid status. Script will proceed without it.')
 			pass
 		pass
 	 
@@ -1226,7 +1259,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 	
 	## last check
 	if set(pipelines) <= set(pipelines_done) and len(pipelines_todo) == 0:
-		logging.info('\033[0mNo tokens found in database to be processed.')
+		logging.info('\033[0mNo tokens in database found to be processed.')
 		time.sleep(300)
 		pass
 	 
@@ -1247,7 +1280,7 @@ def main(server='https://picas-lofar.grid.sara.nl:6984', ftp='gsiftp://gridftp.g
 if __name__=='__main__':
 	# Get command-line options.
 	opt = optparse.OptionParser(usage='%prog ', version='%prog '+_version, description=__doc__)
-	opt.add_option('-s', '--server', help='PiCaS server URL:port', action='store_true', default='https://picas-lofar.grid.sara.nl:6984')
+	opt.add_option('-s', '--server', help='PiCaS server URL:port', action='store_true', default='https://picas-lofar.grid.surfsara.nl:6984')
 	opt.add_option('-f', '--ftp', help='FTP server hosting current prefactor version', action='store_true', default='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/sandbox/')
 	(options, args) = opt.parse_args()
 	
