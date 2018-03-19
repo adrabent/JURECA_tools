@@ -27,7 +27,7 @@ from GRID_LRT.couchdb.client import Server
 
 
 _version = '0.5beta'                           ## program version
-nodes = 23                                     ## number of JURECA nodes (higher number leads to higher queueing time)
+nodes = 25                                     ## number of JURECA nodes (higher number leads to higher queueing time)
 walltime = '01:00:00'                          ## walltime for the JURECA queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
@@ -37,6 +37,7 @@ max_proc_per_node_limit_var = 6                ## maximal processes per node
 error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
+calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
 
 
 os.system('clear')
@@ -156,8 +157,64 @@ def get_cal_observation_id(tokens, list_todos):
 		pass
 	pass
 
+def check_for_corresponding_calibration_results(tokens, list_pipeline, cal_obsid, working_directory):
+    
+	for item in list_pipeline:
+		token = tokens.db[item['value']]
+		break
+		pass
+    
+	results_dir = '/'.join(token['RESULTS_DIR'].split('/')[:-2]) + '/' + calibrator_results + '/' + cal_obsid
+	results_fn  = results_dir + '/' + cal_obsid + '.tar'
+	existence = subprocess.Popen(['uberftp', '-ls', results_fn])
+	errorcode = existence.wait()
+	if errorcode == 0:
+		logging.info('Transferring calibrator results for this field from: \033[35m' + results_fn)
+		filename = working_directory + '/' + cal_obsid + '.tar'
+		transfer  = subprocess.Popen(['globus-url-copy', results_fn, 'file:' + filename], stdout=subprocess.PIPE)
+		errorcode = transfer.wait()
+		if errorcode != 0:
+			logging.error('\033[31m Downloading calibrator results have failed.')
+			for item in list_pipeline: 
+				set_token_status(tokens, item['value'], 'error')
+				set_token_output(tokens, item['value'], 23)
+				set_token_progress(tokens, item['value'], 'Download of calibrator results failed, error code: ' + str(errorcode))
+				pass
+			return False
+			pass
+		else:
+			os.chdir(working_directory)
+			logging.info('Unpacking calibrator results from: \033[35m' + filename)
+			unpack = subprocess.Popen(['tar', 'xfv', filename, '-C', working_directory], stdout=subprocess.PIPE)
+			errorcode = unpack.wait()
+			if errorcode != 0:
+				logging.error('\033[31m Unpacking calibrator results have failed.')
+				for item in list_pipeline: 
+					set_token_status(tokens, item['value'], 'error')
+					set_token_output(tokens, item['value'], 23)
+					set_token_progress(tokens, item['value'], 'Unpacking of calibrator results failed, error code: ' + str(errorcode))
+					pass
+				return False
+				pass
+			os.remove(filename)
+			logging.info('File \033[35m' + filename + '\033[32m was removed.')
+			return True
+			pass
+	else:
+		logging.warning('Could not find any calibrator results for this field in: \033[35m' + results_fn)
+		output = pipeline_output(tokens, list_pipeline)
+		if not 23 in output:
+			for item in list_pipeline: 
+				set_token_status(tokens, item['value'], 'error')
+				set_token_output(tokens, item['value'], 23)
+				set_token_progress(tokens, item['value'], 'No calibrator solutions or data found.')
+				pass
+			pass
+		return False
+		pass
+	pass
 
-def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo):
+def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory):
     
 	obsid_list = []
 	
@@ -176,11 +233,11 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo):
 	obsid = list(set(obsid_list))
         
 	if len(obsid) == 0:
-		logging.warning('\033[33mNo corresponding pipeline found for: \033[35m' + cal_obsid)
-		return False                
+		logging.warning('\033[33mCould not find the following calibrator observation: \033[35m' + cal_obsid)
+		return check_for_corresponding_calibration_results(tokens, list_pipeline, cal_obsid, working_directory)
 		pass
 	elif len(obsid) > 1 or obsid[0] != cal_obsid:
-		logging.warning('\033[33mNo corresponding pipeline found for: \033[35m' + obsid[0])
+		logging.warning('\033[33mNo corresponding target pipeline found for: \033[35m' + obsid[0])
 		return False
 		pass
 	
@@ -207,6 +264,9 @@ def get_pipelines(tokens, list_locked):
 def find_new_observation(observations, observation_done, server, user, password, database, working_directory):
 
 	for observation in observations:
+		if observation == observation_done:
+			continue
+			pass
 		logging.info('Checking observation: \033[35m' + observation)
 		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of certain type
 		list_todos     = tokens.list_tokens_from_view('todo')       # load all todo tokens
@@ -219,7 +279,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 			pass
 		for pipeline in pipelines_todo:
 			if condition in pipeline:
-				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo)
+				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
 					logging.info('Cleaning working directory.')
 					shutil.rmtree(working_directory, ignore_errors = True)
@@ -409,7 +469,6 @@ def pack_data(tokens, token_value, filename, to_pack, transfer_fn, pack_director
 		transfer_successful = transfer_data(tokens, token_value, filename, transfer_fn, working_directory)
 		if transfer_successful:
 			if 'prep_cal' in to_pack_list[0]:
-				logging.error(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1] + 'prep_cal')
 				if os.path.exists(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]+ 'prep_cal'):
 					shutil.rmtree(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]+ 'prep_cal', ignore_errors = True)
 					pass
@@ -419,7 +478,12 @@ def pack_data(tokens, token_value, filename, to_pack, transfer_fn, pack_director
 				if os.path.exists(working_directory + '/' + to_pack_list[0].split('/')[-1]):
 					shutil.rmtree(working_directory + '/' + to_pack_list[0].split('/')[-1], ignore_errors = True)
 					pass
-				shutil.move(to_pack_list[0], working_directory + '/.')
+				if 'MHz' in to_pack_list[0]:
+					shutil.rmtree(to_pack_list[0])
+					pass
+				else:
+					shutil.move(to_pack_list[0], working_directory + '/.')
+					pass
 				pass
 			pass
 		pass
@@ -466,20 +530,25 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 	srm_list         = []
 	list_todownload2 = []
 	
-	logging.info('Checking staging status of files in pipeline: \033[35m' + pipeline_todownload)
 	for item in list_todownload:
 		lock_token(tokens, item['value'])
 		try:
-			srm      = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
-			filename = working_directory + '/' + '_'.join(item['value'].split('_')[-2:]) + '_uv.MS'
-			if os.path.exists(filename):
+			srm       = tokens.db.get_attachment(item['value'], 'srm.txt').read().strip()
+			filename  = working_directory + '/' + '_'.join(item['value'].split('_')[-2:]) + '_uv.MS'
+			filename2 = working_directory + '/' + '_'.join(item['value'].split('_')[-2:]) + '_uv.dppp.MS'
+			if os.path.exists(filename) or os.path.exists(filename2):
 				logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already on disk.')
 				lock_token(tokens, item['value'])
 				set_token_status(tokens, item['value'], 'unpacked')
 				set_token_progress(tokens, item['value'], 0)
 				token = tokens.db[item['value']]
 				if 'ABN' in token.keys():
-					freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+					try:
+						freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+						pass
+					except IndexError:
+						freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename2 + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+						pass
 					update_freq(tokens, item['value'], freq)
 					pass
 				continue
@@ -498,7 +567,7 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 		pass
 
 	## check whether data is staged
-	logging.info('Checking staging status.')
+	logging.info('Checking staging status of files in pipeline: \033[35m' + pipeline_todownload)
 	pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 	is_staged_list = pool.map(is_staged, srm_list)
 	
@@ -613,10 +682,12 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		pass
 	
 	logging.info('Getting pipeline parset file for \033[35m' + observation)
-	SBXloc = []
+	SBXloc      = []
+	results_dir = []
 	for item in list_pipeline:
-		token = tokens.db[item['value']] ## checkout location for pipeline
-		SBXloc.append(token['SBXloc'])   ## save location for pipeline
+		token = tokens.db[item['value']]           ## checkout location for pipeline
+		SBXloc.append(token['SBXloc'])             ## save sandbox location for pipeline
+		results_dir.append(token['RESULTS_DIR'])   ## save results location for pipeline
 		attachments = tokens.list_attachments(item['value'])
 		parsets = [i for i in attachments if 'parset' in i]
 		if len(parsets) != 1:
@@ -648,7 +719,8 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 			pass
 		pass
 	
-	SBXloc = ftp + str(list(set(SBXloc))[0])
+	SBXloc      = ftp + str(list(set(SBXloc))[0])
+	results_dir =       str(list(set(results_dir))[0])
 
 	## applying necessary changes to the parset
 	num_proc_per_node       = os.popen('grep "! num_proc_per_node" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
@@ -670,10 +742,10 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		os.system('sed -i "s/' + makesourcedb            + '/! makesourcedb            = \$LOFARROOT\/bin\/makesourcedb/g " '                + parset)
 		os.system('sed -i "s/' + flagging_strategy       + '/! flagging_strategy       = \$LOFARROOT\/share\/rfistrategies\/HBAdefault/g " ' + parset)
 		os.system('sed -i "s/' + num_SBs_per_group       + '/! num_SBs_per_group       = ' + str(num_SBs_per_group_var)       + '/g" '       + parset)
-			
+        
 	except IndexError:
 		pass
-		
+
 	## downloading prefactor
 	sandbox = SBXloc
 	filename = working_directory + '/prefactor.tar'
@@ -834,7 +906,7 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['value'], 99)
 			set_token_progress(tokens, item['value'], log_information[log_information.find('genericpipeline:'):])
 			pass
-		time.sleep(600)
+		time.sleep(1800)
 		pass
 	elif 'Error' in log_information:
 		for item in list_pipeline:
@@ -842,7 +914,7 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['value'], 99)
 			set_token_progress(tokens, item['value'], log_information[log_information.find('Error:'):])
 			pass
-		time.sleep(600)
+		time.sleep(1800)
 		pass
 	elif 'finished' in log_information:
 		for i, item in enumerate(list_pipeline):
@@ -865,6 +937,8 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 		if os.path.exists(working_directory + '/pipeline/statefile'):
 			os.remove(working_directory + '/pipeline/statefile')
 			logging.info('Statefile has been removed.')
+			shutil.rmtree(working_directory + '/pipeline', ignore_errors = True)
+			logging.info('Cleaning pipeline directory')
 			pass
                     
 		pass
