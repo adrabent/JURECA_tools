@@ -753,12 +753,13 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 	download = subprocess.Popen(['globus-url-copy', sandbox , 'file:' + filename], stdout=subprocess.PIPE)
 	errorcode = download.wait()
 	if errorcode != 0:
-		logging.error('\033[31m Downloading prefactor has failed.')
 		for item in list_pipeline: 
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], -1)
-			set_token_progress(tokens, item['value'], 'download of prefactor failed, error code: ' + str(errorcode))
+			set_token_progress(tokens, item['value'], 'Download of prefactor failed, error code: ' + str(errorcode))
 			pass
+		logging.error('\033[31m Downloading prefactor has failed.')
+		time.sleep(600)
 		return 1
 		pass
 	      
@@ -769,7 +770,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		for item in list_pipeline:
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], -1)
-			set_token_progress(tokens, item['value'], 'unpacking of prefactor failed, error code: ' + str(errorcode))
+			set_token_progress(tokens, item['value'], 'Unpacking of prefactor failed, error code: ' + str(errorcode))
 			pass
 		logging.error('\033[31m Unpacking prefactor has failed.')
 		return 1
@@ -779,8 +780,8 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 	create_submission_script(submit_job, parset, working_directory, submitted)
 	
 	slurm_list = glob.glob(slurm_files)
-	if len(slurm_list) > 0:
-		os.remove(slurm_list[-1])
+	for slurm_file in slurm_list:
+		os.remove(slurm_file)
 		pass
 
 	logging.info('\033[0mWaiting for submission\033[0;5m...')
@@ -842,13 +843,13 @@ def check_submitted_job(slurm_log, submitted):
 	  
 	log_information = os.popen('tail -9 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'ERROR' in log_information:
-		logging.warning(log_information)
+		logging.error(log_information)
 		os.remove(submitted)
 		return log_information
 		pass
 	log_information = os.popen('tail -6 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'Error' in log_information:
-		logging.warning(log_information)
+		logging.error(log_information)
 		os.remove(submitted)
 		return log_information
 		pass
@@ -937,10 +938,7 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 		if os.path.exists(working_directory + '/pipeline/statefile'):
 			os.remove(working_directory + '/pipeline/statefile')
 			logging.info('Statefile has been removed.')
-			shutil.rmtree(working_directory + '/pipeline', ignore_errors = True)
-			logging.info('Cleaning pipeline directory')
 			pass
-                    
 		pass
 	      
 	return 0
@@ -1176,7 +1174,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	## load token of chosen design document
 	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=pc.user, pwd=pc.password, dbn=pc.database) # load token of certain type
 	
-	## add views for users
+	## add views for usersSTvalue
 	tokens.add_view(v_name='downloading', cond=' doc.status == "downloading" ')
 	tokens.add_view(v_name='unpacking',   cond=' doc.status == "unpacking" '  )
 	tokens.add_view(v_name='unpacked',    cond=' doc.status == "unpacked" '   )
@@ -1282,6 +1280,15 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			elif log_information != '':
 				submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory)
 				pass
+			elif log_information == '':
+				for item in list_pipeline:
+					set_token_progress(tokens, item['value'], 'Previous pipeline has not been finished yet')
+					if  len(pipelines_done) > 0:
+						set_token_status(tokens, item['value'], 'unpacked')
+						pass
+					pass
+				time.sleep(300)
+				pass
 			break
 			pass
 		elif 'processing' in status:
@@ -1310,12 +1317,12 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
 			break
 			pass
-		elif len(list_pipeline_all) == 1 and output[0] == 22:
-			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
-			run_prefactor(tokens, list_pipeline_all, working_directory, observation, submitted, slurm_files, pipeline, ftp)
-			break
-			pass
-                elif 'transferred' in status:
+		#elif len(list_pipeline_all) == 1 and output[0] == 22:
+			#logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
+			#run_prefactor(tokens, list_pipeline_all, working_directory, observation, submitted, slurm_files, pipeline, ftp)
+			#break
+			#pass
+		elif 'transferred' in status:
 			continue
 			pass
 		elif 20 in output or 21 in output or 22 in output:
