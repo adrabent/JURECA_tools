@@ -169,6 +169,8 @@ def check_for_corresponding_calibration_results(tokens, list_pipeline, cal_obsid
 	existence = subprocess.Popen(['uberftp', '-ls', results_fn])
 	errorcode = existence.wait()
 	if errorcode == 0:
+		logging.info('Cleaning working directory.')
+		shutil.rmtree(working_directory, ignore_errors = True)
 		logging.info('Transferring calibrator results for this field from: \033[35m' + results_fn)
 		filename = working_directory + '/' + cal_obsid + '.tar'
 		transfer  = subprocess.Popen(['globus-url-copy', results_fn, 'file:' + filename], stdout=subprocess.PIPE)
@@ -240,7 +242,9 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_
 		logging.warning('\033[33mNo corresponding target pipeline found for: \033[35m' + obsid[0])
 		return False
 		pass
-	
+
+	logging.info('Cleaning working directory.')
+	shutil.rmtree(working_directory, ignore_errors = True)
 	return True
 	pass
 	
@@ -281,8 +285,6 @@ def find_new_observation(observations, observation_done, server, user, password,
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
-					logging.info('Cleaning working directory.')
-					shutil.rmtree(working_directory, ignore_errors = True)
 					return observation
 					pass
 				pass
@@ -579,7 +581,7 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 			logging.warning('\033[33mFile \033[35m' + srm + '\033[33m has not been staged yet.')
 			set_token_status(tokens, item['value'], 'error')
 			set_token_output(tokens, item['value'], 22)
-			set_token_progress(tokens, item['value'], 'File has not been staged yet.')
+			set_token_progress(tokens, item['value'], 'File is not staged.')
 			#unlock_token(tokens, item['value'])
 			continue
 			pass
@@ -907,7 +909,7 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['value'], 99)
 			set_token_progress(tokens, item['value'], log_information[log_information.find('genericpipeline:'):])
 			pass
-		time.sleep(1800)
+		time.sleep(7200)
 		pass
 	elif 'Error' in log_information:
 		for item in list_pipeline:
@@ -915,7 +917,7 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['value'], 99)
 			set_token_progress(tokens, item['value'], log_information[log_information.find('Error:'):])
 			pass
-		time.sleep(1800)
+		time.sleep(7200)
 		pass
 	elif 'finished' in log_information:
 		for i, item in enumerate(list_pipeline):
