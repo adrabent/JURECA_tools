@@ -77,11 +77,11 @@ def add_coloring_to_emit_ansi(fn):
 
 def my_handler(type, value, tb):
 	exception = logger.critical("{0}".format(str(value)))
-	time.sleep(300)
 	lock = os.environ['WORK'] + '/.lock'
 	if os.path.exists(lock):
 		os.remove(lock)
 		pass
+	time.sleep(300)
 	pass
 
 def load_design_documents(database):
@@ -787,9 +787,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		pass
 
 	slurm_list = glob.glob(slurm_files)
-	logging.error(str(slurm_list))
 	for slurm_file in slurm_list:
-		logging.error(str(slurm_file))
 		os.remove(slurm_file)
 		pass
 
@@ -802,7 +800,6 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		set_token_output(tokens, item['key'], 0)
 		pass
 	logging.info('Pipeline \033[35m' + pipeline + '\033[32m has been submitted.')
-	#time.sleep(700)
 	
 	return 0
 	pass
@@ -1008,7 +1005,6 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 	# upload calibration results
 	if len(instrument_tables) > 0 and len(antenna_tables) > 0 and len(field_tables) > 0:
 		tokens.delete_tokens(final_pipeline)
-		pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 		for item, instrument_table, antenna_table, field_table in zip(list_done, instrument_tables, antenna_tables, field_tables):
 			token        = tokens.db[item['key']]
 			sbnumber     = str(token['STARTSB'])
@@ -1018,10 +1014,8 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 			to_pack      = instrument_table + ' ' + antenna_table + ' ' + field_table
 			filename     = working_directory + '/instruments_' + obsid + '_' + sbnumber + '.tar'
 			transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
-			pool2.apply_async(pack_and_transfer, args = (item['key'], filename, to_pack, working_directory + '/pipeline', transfer_fn, working_directory, observation, server, user, password, database,))
+			pack_and_transfer(item['key'], filename, to_pack, working_directory + '/pipeline', transfer_fn, working_directory, observation, server, user, password, database)
 			pass
-		pool2.close()
-		pool2.join()
 		pass
             
 	elif len(results) > 0:
@@ -1113,11 +1107,12 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	
 	## load working environment
 	working_directory = os.environ['WORK']
+	home_directory    = os.environ['HOME']
 	lock_file         = working_directory + '/.lock'
 	submitted         = working_directory + '/.submitted'
 	done              = working_directory + '/.done'
 	last_observation  = working_directory + '/.observation'
-	slurm_files       = 'slurm-*.out'
+	slurm_files       = home_directory    + '/slurm-*.out'
 	log_information   = ''
 	logging.info('\033[0mWorking directory is ' + working_directory)
 	
@@ -1210,10 +1205,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		gsilist   = sorted(list(set(gsilist))) # to re-reverse the list in order to match it for the upcoming loop and use only distinct files
 		pool      = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 		for i, (url, item) in enumerate(zip(gsilist, list_todownload)):
-			#logging.error(str(i))
 			pool.apply_async(download_data, args = (url, item['key'], working_directory, observation, server, pc.user, pc.password, pc.database,))
 			if (i + 1) % multiprocessing.cpu_count() == 0:
-				#logging.error('adding main')
 				pool.apply_async(main, args = (server, ftp, True,))
 				pass
 			pass
@@ -1230,9 +1223,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
 			log_information = check_submitted_job(slurm_log, submitted)
 			pass
-		#else:
-			#return 0
-			#pass
 		pass
 
 	## check which pipelines are done and if observation is finished
@@ -1253,6 +1243,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		pass
 	
 	## main pipeline loop
+	#logging.error(str(pipelines))
+	#logging.error(str(locked_pipelines))
 	for pipeline in pipelines:
 		tokens.add_view(view_name=pipeline, cond=' doc.PIPELINE_STEP == "' + pipeline + '" ')                                         ## select all tokens of this pipeline
 		tokens.add_view(view_name='temp',   cond=' doc.PIPELINE_STEP == "' + pipeline + '" && (doc.output < 20 |  doc.output > 22)')  ## select only tokens without download/upload error
@@ -1268,7 +1260,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m shows more than ' + str(error_tolerance) + ' errors. Script will try to rerun them.')
 				for item in list_pipeline_download:
 					unlock_token(tokens, item['key'])
-					pass                                    
+					pass
+				time.sleep(600)
 				break
 				pass
 			pass
@@ -1294,15 +1287,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			elif log_information != '':
 				submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory)
 				pass
-			#elif log_information == '':
-				#for item in list_pipeline:
-					#set_token_progress(tokens, item['key'], 'Previous pipeline has not been finished yet')
-					#if  len(pipelines_done) > 0:
-						#set_token_status(tokens, item['key'], 'unpacked')
-						#pass
-					#pass
-				#time.sleep(300)
-				#pass
 			break
 			pass
 		elif 'processing' in status:
@@ -1321,11 +1305,21 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			submit_results(tokens, list_done, working_directory, observation, server, pc.user, pc.password, pc.database, pipeline)
 			continue
 			pass
-		elif 'unpacked' in status and not 'unpacking' in status and not 'downloading' in status:# or 'queued' in status:
-			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
-			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
-			break
-			pass
+		elif ('unpacked' in status or 'queued' in status) and not 'unpacking' in status and not 'downloading' in status:
+			if pipeline != locked_pipelines[0] and locked_pipelines[0] not in pipelines_done:
+				for item in list_pipeline:
+					set_token_progress(tokens, item['key'], 'Previous pipeline has not been finished yet')
+					if  len(pipelines_done) > 0:
+						set_token_status(tokens, item['key'], 'unpacked')
+						pass
+					pass
+				break
+				pass
+			else:
+				logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
+				run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
+				break
+				pass
 		elif 99 in output or -1 in output or 3 in output:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be resumed.')
 			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
@@ -1394,8 +1388,8 @@ if __name__=='__main__':
 	logging.root.addHandler(logfile)
 	
 	# install exception handler
-	#logger = logging.getLogger(LOG_FILENAME)
-	#sys.excepthook = my_handler
+	logger = logging.getLogger(LOG_FILENAME)
+	sys.excepthook = my_handler
 	
 	# location of logfile
 	logging.info('\033[0mLog file is written to ' + LOG_FILENAME)
