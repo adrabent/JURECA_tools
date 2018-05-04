@@ -35,6 +35,7 @@ num_SBs_per_group_var = 10                     ## chunk size
 max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
 max_proc_per_node_limit_var = 6                ## maximal processes per node
 error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
+error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
@@ -82,6 +83,15 @@ def my_handler(type, value, tb):
 		os.remove(lock)
 		pass
 	time.sleep(300)
+	pass
+
+def is_running(lock_file):
+	if os.path.isfile(lock_file):
+		return True
+		pass
+	else:
+		return False
+		pass
 	pass
 
 def load_design_documents(database):
@@ -267,9 +277,23 @@ def get_pipelines(tokens, list_locked):
       
 def find_new_observation(observations, observation_done, server, user, password, database, working_directory):
 
+	not_staged_list = []
+        
 	for observation in observations:
 		if observation == observation_done:
 			continue
+			pass
+		elif is_running(working_directory + '/.' + observation):
+			not_staged_list.append(observation)
+			if len(not_staged_list) == len(observations):
+				for not_staged in not_staged_list:
+					os.remove(working_directory + '/.' + not_staged)
+					pass
+				pass
+			continue
+			pass
+		if len(not_staged_list) > 0:
+			logging.warning('The following observations have not been staged yet: \033[35m' + str(not_staged_list))
 			pass
 		logging.info('Checking observation: \033[35m' + observation)
 		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of certain type
@@ -285,6 +309,10 @@ def find_new_observation(observations, observation_done, server, user, password,
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
+					for not_staged in not_staged_list:
+						#logging.error(str(not_staged))
+						subprocess.Popen(['touch', working_directory + '/.' + not_staged])
+						pass
 					return observation
 					pass
 				pass
@@ -396,16 +424,6 @@ def is_staged(url):
 			return False
 			pass
 	except:
-		return False
-		pass
-	pass
-
-
-def is_running(lock_file):
-	if os.path.isfile(lock_file):
-		return True
-		pass
-	else:
 		return False
 		pass
 	pass
@@ -1040,7 +1058,8 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				s_list[ABN] = srm
 				pass
 			ABNs = slice_dicts(s_list, slice_size = num_SBs_per_group_var)
-			ts.create_dict_tokens(iterable = ABNs, id_prefix = 'ABN', id_append = final_pipeline + '_' + obsid, key_name = 'ABN', file_upload = 'srm.txt')
+			#ts.create_dict_tokens(iterable = ABNs, id_prefix = 'ABN', id_append = final_pipeline + '_' + obsid, key_name = 'ABN', file_upload = 'srm.txt')
+			ts.create_dict_tokens(iterable = ABNs, id_prefix = 'ABN', id_append = final_pipeline, key_name = 'ABN', file_upload = 'srm.txt')
 			list_final_pipeline = tokens.list_tokens_from_view(final_pipeline)  ## get the final pipeline list again
 			for item in list_final_pipeline:
 				token = tokens.db[item['key']]
@@ -1150,6 +1169,11 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			pass
 		pass
 
+	## remove old staging file
+	if is_running(working_directory + '/.' + observation):
+		os.remove(working_directory + '/.' + observation)
+		pass
+	
 	## reserve following processes
 	logging.info('Selected observation: \033[35m' + observation)
 	observation_file = open(last_observation, 'w')
@@ -1261,7 +1285,15 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				for item in list_pipeline_download:
 					unlock_token(tokens, item['key'])
 					pass
-				time.sleep(600)
+				if len(list_pipeline_download) > (len(list_pipeline_all) - error_tolerance):
+					logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
+					subprocess.Popen(['touch', working_directory + '/.' + observation])
+					os.remove(last_observation)
+					tokens.reset_tokens(view_name=pipeline)
+					pass
+				else:
+					time.sleep(600)
+					pass
 				break
 				pass
 			pass
