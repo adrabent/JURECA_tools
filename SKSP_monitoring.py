@@ -35,7 +35,6 @@ num_SBs_per_group_var = 10                     ## chunk size
 max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
 max_proc_per_node_limit_var = 6                ## maximal processes per node
 error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
-error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
@@ -279,6 +278,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 
 	not_staged_list = []
         
+	#print observations
 	for observation in observations:
 		if observation == observation_done:
 			continue
@@ -306,6 +306,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 			continue
 			pass
 		for pipeline in pipelines_todo:
+			#print pipeline
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
@@ -563,7 +564,8 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 				logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already on disk.')
 				lock_token(tokens, item['key'])
 				set_token_status(tokens, item['key'], 'unpacked')
-				set_token_progress(tokens, item['key'], 0)
+				#set_token_progress(tokens, item['key'], 0)
+				set_token_output(tokens, item['key'], 0)
 				if 'ABN' in token.keys():
 					try:
 						freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
@@ -1267,8 +1269,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		pass
 	
 	## main pipeline loop
-	#logging.error(str(pipelines))
-	#logging.error(str(locked_pipelines))
 	for pipeline in pipelines:
 		tokens.add_view(view_name=pipeline, cond=' doc.PIPELINE_STEP == "' + pipeline + '" ')                                         ## select all tokens of this pipeline
 		tokens.add_view(view_name='temp',   cond=' doc.PIPELINE_STEP == "' + pipeline + '" && (doc.output < 20 |  doc.output > 22)')  ## select only tokens without download/upload error
@@ -1289,10 +1289,14 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 					logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
 					subprocess.Popen(['touch', working_directory + '/.' + observation])
 					os.remove(last_observation)
-					tokens.reset_tokens(view_name=pipeline)
+					tokens.reset_tokens(pipeline)
+					for pipeline2 in list(set(locked_pipelines + pipelines_todo)):
+						#print pipeline2
+						tokens.reset_tokens(view_name=pipeline2)
+						pass
 					pass
 				else:
-					time.sleep(600)
+					time.sleep(3600)
 					pass
 				break
 				pass
@@ -1362,7 +1366,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			pass
 		elif 20 in output or 21 in output or 22 in output:
 			logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
-			continue
+			break
 			pass
 		else:
 			logging.error('\033[31mPipeline \033[35m' + pipeline + '\033[31m has an invalid status. Script will proceed without it.')
