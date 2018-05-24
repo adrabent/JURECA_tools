@@ -34,7 +34,7 @@ IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
 max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
 max_proc_per_node_limit_var = 6                ## maximal processes per node
-error_tolerance = 5                            ## number of failed tokens still acceptable for running pipelines
+error_tolerance = 3                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
@@ -179,7 +179,7 @@ def check_for_corresponding_calibration_results(tokens, list_pipeline, cal_obsid
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Cleaning working directory.')
-		shutil.rmtree(working_directory, ignore_errors = True)
+		#shutil.rmtree(working_directory, ignore_errors = True)
 		logging.info('Transferring calibrator results for this field from: \033[35m' + results_fn)
 		filename = working_directory + '/' + cal_obsid + '.tar'
 		transfer  = subprocess.Popen(['globus-url-copy', results_fn, 'file:' + filename], stdout=subprocess.PIPE)
@@ -253,7 +253,7 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_
 		pass
 
 	logging.info('Cleaning working directory.')
-	shutil.rmtree(working_directory, ignore_errors = True)
+	#shutil.rmtree(working_directory, ignore_errors = True)
 	return True
 	pass
 	
@@ -276,28 +276,52 @@ def get_pipelines(tokens, list_locked):
       
 def find_new_observation(observations, observation_done, server, user, password, database, working_directory):
 
-	not_staged_list = []
+	staged_dict = {}
         
 	#print observations
 	for observation in observations:
 		if observation == observation_done:
 			continue
 			pass
-		elif is_running(working_directory + '/.' + observation):
-			not_staged_list.append(observation)
-			if len(not_staged_list) == len(observations):
-				for not_staged in not_staged_list:
-					os.remove(working_directory + '/.' + not_staged)
-					pass
-				pass
-			continue
+		logging.info('Checking staging status of files in observation: \033[35m' + observation)
+		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) ## load token of certain type
+		list_todos     = tokens.list_tokens_from_view('todo')                                                         ## load all todo tokens        
+		srm_list = []
+		for item in list_todos:
+			srm       = tokens.db.get_attachment(item['key'], 'srm.txt').read().strip()
+			srm_list.append(srm)
 			pass
-		if len(not_staged_list) > 0:
-			logging.warning('The following observations have not been staged yet: \033[35m' + str(not_staged_list))
-			pass
+		pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+		is_staged_list   = pool.map(is_staged, srm_list)
+		#print is_staged_list
+		staged_files     = sum(is_staged_list)
+		staging_fraction = staged_files / float(len(list_todos))
+		logging.info('The staging status is: \033[35m' + str(100 * staging_fraction) + '%')
+		staged_dict[str(staging_fraction)] = observation
+		pass
+    
+	observation_keys = list(reversed(sorted(staged_dict.keys())))
+	#print staged_dict
+	#print observation_keys
+
+	if float(observation_keys[0]) < 0.1:
+		logging.warning('Waiting for data being staged...')
+		time.wait(600)
+		return 1
+		pass
+
+	for observation_key in observation_keys:
+		observation = staged_dict[observation_key]
 		logging.info('Checking observation: \033[35m' + observation)
-		tokens         = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of certain type
-		list_todos     = tokens.list_tokens_from_view('todo')       # load all todo tokens
+		#elif is_running(working_directory + '/.' + observation):
+			#not_staged_list.append(observation)
+			#if len(not_staged_list) == len(observations):
+				#for not_staged in not_staged_list:
+					#os.remove(working_directory + '/.' + not_staged)
+					#pass
+				#pass
+			#continue
+			#pass
 		try:
 			pipelines_todo = get_pipelines(tokens, list_todos)  # check whether there are also todo pipelines
 			pass
@@ -310,10 +334,10 @@ def find_new_observation(observations, observation_done, server, user, password,
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
-					for not_staged in not_staged_list:
-						#logging.error(str(not_staged))
-						subprocess.Popen(['touch', working_directory + '/.' + not_staged])
-						pass
+					#for not_staged in not_staged_list:
+						##logging.error(str(not_staged))
+						#subprocess.Popen(['touch', working_directory + '/.' + not_staged])
+						#pass
 					return observation
 					pass
 				pass
@@ -1285,19 +1309,17 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				for item in list_pipeline_download:
 					unlock_token(tokens, item['key'])
 					pass
-				if len(list_pipeline_download) > (len(list_pipeline_all) - error_tolerance):
-					logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
-					subprocess.Popen(['touch', working_directory + '/.' + observation])
-					os.remove(last_observation)
-					tokens.reset_tokens(pipeline)
-					for pipeline2 in list(set(locked_pipelines + pipelines_todo)):
-						#print pipeline2
-						tokens.reset_tokens(view_name=pipeline2)
-						pass
-					pass
-				else:
-					time.sleep(3600)
-					pass
+				#if len(list_pipeline_download) > (len(list_pipeline_all) - error_tolerance):
+					#logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
+					#subprocess.Popen(['touch', working_directory + '/.' + observation])
+					#os.remove(last_observation)
+					#tokens.reset_tokens(pipeline)
+					#for pipeline2 in list(set(locked_pipelines + pipelines_todo)):
+						##print pipeline2
+						#tokens.reset_tokens(view_name=pipeline2)
+						#pass
+					#pass
+				time.sleep(3600)
 				break
 				pass
 			pass
