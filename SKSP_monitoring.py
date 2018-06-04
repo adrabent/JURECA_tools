@@ -179,7 +179,7 @@ def check_for_corresponding_calibration_results(tokens, list_pipeline, cal_obsid
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Cleaning working directory.')
-		#shutil.rmtree(working_directory, ignore_errors = True)
+		shutil.rmtree(working_directory, ignore_errors = True)
 		logging.info('Transferring calibrator results for this field from: \033[35m' + results_fn)
 		filename = working_directory + '/' + cal_obsid + '.tar'
 		transfer  = subprocess.Popen(['globus-url-copy', results_fn, 'file:' + filename], stdout=subprocess.PIPE)
@@ -253,7 +253,7 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_
 		pass
 
 	logging.info('Cleaning working directory.')
-	#shutil.rmtree(working_directory, ignore_errors = True)
+	shutil.rmtree(working_directory, ignore_errors = True)
 	return True
 	pass
 	
@@ -278,7 +278,6 @@ def find_new_observation(observations, observation_done, server, user, password,
 
 	staged_dict = {}
         
-	#print observations
 	for observation in observations:
 		if observation == observation_done:
 			continue
@@ -293,7 +292,6 @@ def find_new_observation(observations, observation_done, server, user, password,
 			pass
 		pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 		is_staged_list   = pool.map(is_staged, srm_list)
-		#print is_staged_list
 		staged_files     = sum(is_staged_list)
 		staging_fraction = staged_files / float(len(list_todos))
 		logging.info('The staging status is: \033[35m' + str(100 * staging_fraction) + '%')
@@ -301,8 +299,6 @@ def find_new_observation(observations, observation_done, server, user, password,
 		pass
     
 	observation_keys = list(reversed(sorted(staged_dict.keys())))
-	#print staged_dict
-	#print observation_keys
 
 	if float(observation_keys[0]) < 0.1:
 		logging.warning('Waiting for data being staged...')
@@ -313,15 +309,8 @@ def find_new_observation(observations, observation_done, server, user, password,
 	for observation_key in observation_keys:
 		observation = staged_dict[observation_key]
 		logging.info('Checking observation: \033[35m' + observation)
-		#elif is_running(working_directory + '/.' + observation):
-			#not_staged_list.append(observation)
-			#if len(not_staged_list) == len(observations):
-				#for not_staged in not_staged_list:
-					#os.remove(working_directory + '/.' + not_staged)
-					#pass
-				#pass
-			#continue
-			#pass
+		tokens      = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) ## load token of certain type
+		list_todos  = tokens.list_tokens_from_view('todo')                                                         ## load all todo tokens        
 		try:
 			pipelines_todo = get_pipelines(tokens, list_todos)  # check whether there are also todo pipelines
 			pass
@@ -334,16 +323,13 @@ def find_new_observation(observations, observation_done, server, user, password,
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
-					#for not_staged in not_staged_list:
-						##logging.error(str(not_staged))
-						#subprocess.Popen(['touch', working_directory + '/.' + not_staged])
-						#pass
 					return observation
 					pass
 				pass
 			pass
+		logging.warning('Observation: \033[35m' + observation + '\033[33m does not show a valid \033[35m' + condition + '\033[33m pipeline.')
 		pass
-	
+
 	return observation_done
 
 	pass
@@ -588,7 +574,6 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 				logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already on disk.')
 				lock_token(tokens, item['key'])
 				set_token_status(tokens, item['key'], 'unpacked')
-				#set_token_progress(tokens, item['key'], 0)
 				set_token_output(tokens, item['key'], 0)
 				if 'ABN' in token.keys():
 					try:
@@ -1084,7 +1069,6 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				s_list[ABN] = srm
 				pass
 			ABNs = slice_dicts(s_list, slice_size = num_SBs_per_group_var)
-			#ts.create_dict_tokens(iterable = ABNs, id_prefix = 'ABN', id_append = final_pipeline + '_' + obsid, key_name = 'ABN', file_upload = 'srm.txt')
 			ts.create_dict_tokens(iterable = ABNs, id_prefix = 'ABN', id_append = final_pipeline, key_name = 'ABN', file_upload = 'srm.txt')
 			list_final_pipeline = tokens.list_tokens_from_view(final_pipeline)  ## get the final pipeline list again
 			for item in list_final_pipeline:
@@ -1234,8 +1218,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		pipelines_done      = sorted(list(set(get_pipelines(tokens, list_done  ))))
 		pipelines_todo      = sorted(list(set(get_pipelines(tokens, list_todos ))))
 	except TypeError:
-		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors. Script will check for new observations in the next run.')
-		os.remove(last_observation)
+		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors.')# Script will check for new observations in the next run.')
+		#os.remove(last_observation)
 		return 1
 		pass
 	
@@ -1309,16 +1293,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				for item in list_pipeline_download:
 					unlock_token(tokens, item['key'])
 					pass
-				#if len(list_pipeline_download) > (len(list_pipeline_all) - error_tolerance):
-					#logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
-					#subprocess.Popen(['touch', working_directory + '/.' + observation])
-					#os.remove(last_observation)
-					#tokens.reset_tokens(pipeline)
-					#for pipeline2 in list(set(locked_pipelines + pipelines_todo)):
-						##print pipeline2
-						#tokens.reset_tokens(view_name=pipeline2)
-						#pass
-					#pass
 				time.sleep(3600)
 				break
 				pass
@@ -1388,6 +1362,10 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			pass
 		elif 20 in output or 21 in output or 22 in output:
 			logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
+			if len(pipelines_done) > 0:
+				logging.warning('Resetting pipeline: \033[35m' + pipeline)
+				tokens.reset_tokens(view_name=pipeline)
+				pass
 			break
 			pass
 		else:
