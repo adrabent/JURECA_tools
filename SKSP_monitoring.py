@@ -287,8 +287,13 @@ def find_new_observation(observations, observation_done, server, user, password,
 		list_todos     = tokens.list_tokens_from_view('todo')                                                         ## load all todo tokens        
 		srm_list = []
 		for item in list_todos:
-			srm       = tokens.db.get_attachment(item['key'], 'srm.txt').read().strip()
-			srm_list.append(srm)
+			try:
+				srm       = tokens.db.get_attachment(item['key'], 'srm.txt').read().strip()
+				srm_list.append(srm)
+				pass
+			except AttributeError:
+				logging.warning('Invalid download URL in: \033[35m' + str(item['key']))
+				pass
 			pass
 		pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
 		is_staged_list   = pool.map(is_staged, srm_list)
