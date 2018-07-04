@@ -305,9 +305,13 @@ def find_new_observation(observations, observation_done, server, user, password,
     
 	observation_keys = list(reversed(sorted(staged_dict.keys())))
 
+	if len(observation_keys) == 0:
+		return 1
+		pass
+            
 	if float(observation_keys[0]) < 0.1:
-		logging.warning('Waiting for data being staged...')
-		time.wait(600)
+		logging.info('Waiting for data being staged...')
+		time.sleep(3600)
 		return 1
 		pass
 
@@ -332,7 +336,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 					pass
 				pass
 			pass
-		logging.warning('Observation: \033[35m' + observation + '\033[33m does not show a valid \033[35m' + condition + '\033[33m pipeline.')
+		logging.warning('Observation: \033[35m' + observation + '\033[33m does not show a valid pipeline.')
 		pass
 
 	return observation_done
@@ -1298,6 +1302,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				for item in list_pipeline_download:
 					unlock_token(tokens, item['key'])
 					pass
+				logging.info('Waiting for data being staged...')
 				time.sleep(3600)
 				break
 				pass
@@ -1387,10 +1392,10 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		logging.info('\033[0mNo tokens in database found to be processed.')
 		time.sleep(300)
 		pass
-	 
+
 	## remove the lock file
 	os.remove(lock_file)
-	 
+	
 	## wait for processes to be finished
 	try:
 		pool.join()
