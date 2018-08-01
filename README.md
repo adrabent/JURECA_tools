@@ -1,5 +1,5 @@
 # JURECA_tools
-## Tools for automatic processing data on JURECA ##
+## Tools for automatic processing data on JUWELS ##
 
 The `JURECA tools` provide a repository of tools to allow efficient processing of LOFAR data stored in the Jülich Long-Term-Archive.
 It makes use of the `GRID_LRT` tools by Alexandar Mechev.
