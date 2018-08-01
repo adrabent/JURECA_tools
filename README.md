@@ -9,7 +9,7 @@ Currently available tools:
 * copying and updating a pre-compiled LOFAR installation from a `cvmfs`-directory
 * installation script for compiling third-party software
 * communication via a `couchDB` token server
-* automatic submission of jobs to the `JURECA` queue
+* automatic submission of jobs to the `JUWELS` queue
 
 Installation and Usage
 ----------------------
@@ -25,11 +25,11 @@ It is called on `JUDAC` via (in a 1 minute interval)
     ./run_monitoring_JUDAC.sh
     
 The script `check_pipeline.sh` checks whether a new job (created by `SKSP_monitoring.py`) is available and will launch it.
-It is called on `JURECA` via (in a 1 minute interval)
+It is called on `JUWELS` via (in a 1 minute interval)
 
-    ./run_monitoring_JURECA.sh
+    ./run_monitoring_JUWELS.sh
     
-The outputs are logged locally on `JURECA`.
+The outputs are logged locally on `JUWELS`.
 
 ### Dependencies (downloaded via `tools_install`)
 
