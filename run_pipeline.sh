@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
-env |grep SLURM
+env | grep SLURM
 
-. /homea/htb00/htb006/env_lofar_2.20.2_stage2017b.sh
+. /gpfs/homea/htb00/htb006/env_lofar_2.20.2_juwels.sh
 
 ./LOFAR.py -c $1 $2

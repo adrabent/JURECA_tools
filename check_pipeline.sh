@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-. /homea/htb00/htb006/env_lofar_2.20.2_stage2017b.sh
+. /gpfs/homea/htb00/htb006/env_lofar_2.20.2_juwels.sh
 
 file=$WORK/submit_job.sh
 while [ 1 ]
