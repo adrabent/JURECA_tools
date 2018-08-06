@@ -8,7 +8,7 @@ export PARROT_CVMFS_REPO="softdrive.nl:url=http://cvmfs01.nikhef.nl/cvmfs/softdr
 parrot_run rsync -auvPb --stats --delete /cvmfs/softdrive.nl/lofar_sw/ $HOME/software/.
 
 ## update files in the directories
-source $HOME/env_lofar_2.20.2_stage2017b.sh
+source $HOME/env_lofar_2.20.2_juwels.sh
 
 which losoto | awk '{print "ln -s "$1" $LOFARROOT/bin/losoto"}' | bash
 
