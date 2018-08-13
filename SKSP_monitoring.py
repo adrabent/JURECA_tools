@@ -13,6 +13,7 @@ import optparse
 import glob
 import shutil
 import math
+import random
 
 import time, datetime
 import subprocess
@@ -26,15 +27,16 @@ from GRID_LRT.Staging import srmlist
 from GRID_LRT.couchdb.client import Server
 
 
-_version = '0.5beta'                           ## program version
-nodes = 25                                     ## number of JURECA nodes (higher number leads to higher queueing time)
-walltime = '01:00:00'                          ## walltime for the JURECA queue
+_version = '1.0'                               ## program version
+nodes = 4                                      ## number of JUWELS nodes (higher number leads to higher queueing time)
+walltime = '12:00:00'                          ## walltime for the JUWELS queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
-max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
-max_proc_per_node_limit_var = 6                ## maximal processes per node
-error_tolerance = 3                            ## number of failed tokens still acceptable for running pipelines
+max_dppp_threads_var = 96                      ## maximal threads per node per DPPP instance
+max_proc_per_node_limit_var = 1                ## maximal processes per node for DPPP
+num_proc_per_node_var = 1                      ## maximal processes per node for others
+error_tolerance = 0                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
@@ -300,10 +302,16 @@ def find_new_observation(observations, observation_done, server, user, password,
 		staged_files     = sum(is_staged_list)
 		staging_fraction = staged_files / float(len(list_todos))
 		logging.info('The staging status is: \033[35m' + str(100 * staging_fraction) + '%')
-		staged_dict[str(staging_fraction)] = observation
+		if str(staging_fraction) in staged_dict.keys():
+			staged_dict[str(staging_fraction + random.randint(1,100)/10000.)] = observation
+			pass
+		else:
+			staged_dict[str(staging_fraction)] = observation
+			pass
 		pass
     
 	observation_keys = list(reversed(sorted(staged_dict.keys())))
+        logging.error(str(observation_keys))
 
 	if len(observation_keys) == 0:
 		return 1
@@ -659,7 +667,7 @@ def download_data(url, token_value, working_directory, observation, server, user
    
 def create_submission_script(submit_job, parset, working_directory, submitted):
 	
-	home_directory = os.environ['HOME']
+	home_directory    = os.environ['HOME']
 	
 	if os.path.isfile(submit_job):
 		logging.warning('\033[33mFile for submission already exists. It will be overwritten.')
@@ -676,7 +684,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		IONEX_script         = os.popen('find ' + working_directory + ' -name download_IONEX.py ').readlines()[0].rstrip('\n').replace(' ','')
 		IONEX_path           = os.popen('grep ionex_path '           + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		jobfile.write(IONEX_script + ' --destination ' + IONEX_path + ' --server ' + IONEX_server + ' ' + working_directory + '/' + target_input_pattern + '\n')
+		jobfile.write('/gpfs' + IONEX_script + ' --destination ' + IONEX_path + ' --server ' + IONEX_server + ' /gpfs' + working_directory + '/' + target_input_pattern + '\n')
 		pass
 	except IndexError:
 		pass
@@ -687,14 +695,14 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		if os.path.exists(target_skymodel):
 			os.remove(target_skymodel)
 			pass
-		jobfile.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
+		jobfile.write('/gpfs' + skymodel_script + ' /gpfs' + working_directory + '/' + target_input_pattern + ' /gpfs' + target_skymodel + '\n')
 		pass
 	except IndexError:
 		pass
 	
 	## write-up of final command
 	jobfile.write('\n')
-	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' ' + home_directory + '/run_pipeline.sh ' + parset + ' ' + working_directory)
+	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' /gpfs' + home_directory + '/run_pipeline.sh /gpfs' + parset + ' /gpfs' + working_directory)
 	jobfile.close()
 	
 	os.system('chmod +x ' + submit_job)
@@ -767,7 +775,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 	losoto_executable       = os.popen('grep "! losoto_executable" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
 
 	os.system('sed -i "s/' + losoto_executable       + '/! losoto_executable       = \$LOFARROOT\/bin\/losoto/g " '                      + parset)
-	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = input.output.max_per_node/g" '                      + parset)
+	os.system('sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = ' + str(num_proc_per_node_var)       + '/g" '       + parset)
 	os.system('sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var) + '/g" '       + parset)
 	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)        + '/g" '       + parset)
 	
@@ -891,6 +899,11 @@ def check_submitted_job(slurm_log, submitted):
 		os.remove(submitted)
 		return log_information
 		pass
+	if 'error:' in log_information:
+		logging.error(log_information)
+		os.remove(submitted)
+		return log_information
+		pass
 	log_information = os.popen('tail -6 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'Error' in log_information:
 		logging.error(log_information)
@@ -950,6 +963,14 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_status(tokens, item['key'], 'error')
 			set_token_output(tokens, item['key'], 99)
 			set_token_progress(tokens, item['key'], log_information[log_information.find('genericpipeline:'):])
+			pass
+		time.sleep(43200)
+		pass
+	if 'error:' in log_information:
+		for item in list_pipeline:
+			set_token_status(tokens, item['key'], 'error')
+			set_token_output(tokens, item['key'], 99)
+			set_token_progress(tokens, item['key'], log_information[log_information.find('error:'):])
 			pass
 		time.sleep(43200)
 		pass
@@ -1155,8 +1176,10 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	logging.info('\033[0mWorking directory is ' + working_directory)
 	
 	## check whether an instance of this program is already running
-	if is_running(lock_file):
+	if is_running(lock_file) and not recursive:
 		logging.error('\033[31mAn instance of this program appears to be still running. If not, please remove the lock file: \033[0m' + lock_file)
+		time.sleep(3600)
+		os.remove(lock_file)
 		return 1
 		pass
 	           
@@ -1184,6 +1207,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		observation = find_new_observation(observations, observation, server, pc.user, pc.password, pc.database, working_directory)
 		if observation == 1:
 			logging.info('\033[0mNo new observations could be found. If database is not empty please check it for new or false tokens manually.')
+			time.sleep(300)
 			return 1
 			pass
 		pass
@@ -1210,7 +1234,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	tokens.add_view(view_name='processing',  cond=' doc.status == "processing" ' )
 	tokens.add_view(view_name='processed',   cond=' doc.status == "processed" '  )
 	tokens.add_view(view_name='packing',     cond=' doc.status == "packing" '    )
-	tokens.add_view(view_name='transferring',  cond=' doc.status == "transferring" ')
 	tokens.add_view(view_name='transferring',  cond=' doc.status == "transferring" ')
 	tokens.add_view(view_name='done', cond=' doc.done > 0  && doc.output == 0')	
 	
@@ -1270,9 +1293,9 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 
 	## check which pipelines are done and if observation is finished
 	if len(pipelines_done) > 0 and not recursive:
-		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + ' \033[0m are done.')
+		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + '\033[0m are done.')
 		if set(pipelines) < set(pipelines_done) and len(pipelines_todo) == 0:
-			logging.info('\033[0mObservation \033[35m' + observation + ' \033[0m is done.')
+			logging.info('\033[0mObservation \033[35m' + observation + '\033[0m is done.')
 			tokens.del_view(view_name='downloading')
 			tokens.del_view(view_name='unpacking')
 			tokens.del_view(view_name='unpacked')
@@ -1314,7 +1337,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			if recursive:
 				continue
 				pass
-			logging.warning('\033[33mPipeline \033[35m' + pipeline + ' \033[33m for this observation is broken. Tokens will be reset.')
+			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m for this observation is broken. Tokens will be reset.')
 			tokens.reset_tokens(view_name=pipeline)
 			break
 			pass
@@ -1349,6 +1372,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			pass
 		elif ('unpacked' in status or 'queued' in status) and not 'unpacking' in status and not 'downloading' in status:
 			if pipeline != locked_pipelines[0] and locked_pipelines[0] not in pipelines_done:
+				logging.error(str(locked_pipelines))  ## keep this until bug re-appears
+				logging.error(str(pipelines_done))    ## keep this until bug re-appears
 				for item in list_pipeline:
 					set_token_progress(tokens, item['key'], 'Previous pipeline has not been finished yet')
 					if  len(pipelines_done) > 0:
@@ -1392,9 +1417,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		logging.info('\033[0mNo tokens in database found to be processed.')
 		time.sleep(300)
 		pass
-
-	## remove the lock file
-	os.remove(lock_file)
 	
 	## wait for processes to be finished
 	try:
@@ -1403,6 +1425,10 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	except UnboundLocalError:
 		pass
 	
+	## remove the lock file
+	if is_running(lock_file):
+		os.remove(lock_file)
+		pass
 	return 0
 	pass
 
