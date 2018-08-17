@@ -28,15 +28,15 @@ from GRID_LRT.couchdb.client import Server
 
 
 _version = '1.0'                               ## program version
-nodes = 4                                      ## number of JUWELS nodes (higher number leads to higher queueing time)
-walltime = '12:00:00'                          ## walltime for the JUWELS queue
+nodes = 24                                     ## number of JUWELS nodes (higher number leads to a longer queueing time)
+walltime = '01:00:00'                          ## walltime for the JUWELS queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
-max_dppp_threads_var = 96                      ## maximal threads per node per DPPP instance
-max_proc_per_node_limit_var = 1                ## maximal processes per node for DPPP
-num_proc_per_node_var = 1                      ## maximal processes per node for others
-error_tolerance = 0                            ## number of failed tokens still acceptable for running pipelines
+max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
+max_proc_per_node_limit_var = 6                ## maximal processes per node for DPPP
+num_proc_per_node_var = 10                     ## maximal processes per node for others
+error_tolerance = 3                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
@@ -311,7 +311,6 @@ def find_new_observation(observations, observation_done, server, user, password,
 		pass
     
 	observation_keys = list(reversed(sorted(staged_dict.keys())))
-        logging.error(str(observation_keys))
 
 	if len(observation_keys) == 0:
 		return 1
@@ -336,7 +335,6 @@ def find_new_observation(observations, observation_done, server, user, password,
 			continue
 			pass
 		for pipeline in pipelines_todo:
-			#print pipeline
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
