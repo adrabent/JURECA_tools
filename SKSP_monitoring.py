@@ -33,13 +33,14 @@ walltime = '01:00:00'                          ## walltime for the JUWELS queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
-max_dppp_threads_var = 10                      ## maximal threads per node per DPPP instance
+max_dppp_threads_var = 12                      ## maximal threads per node per DPPP instance
 max_proc_per_node_limit_var = 6                ## maximal processes per node for DPPP
 num_proc_per_node_var = 10                     ## maximal processes per node for others
-error_tolerance = 3                            ## number of failed tokens still acceptable for running pipelines
+error_tolerance = 2                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
+min_staging_fraction = 0.25                    ## only process fields with this minimum fraction of staged data
 
 
 os.system('clear')
@@ -236,13 +237,20 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_
 		if pipeline == pipeline_todo:
 			list_pipeline = tokens.list_tokens_from_view(pipeline_todo)
 			cal_obsid = get_cal_observation_id(tokens, list_pipeline)
+			output = pipeline_output(tokens, list_pipeline)
 			pass
 		else:
 			list_pipeline = tokens.list_tokens_from_view(pipeline_todo)
 			obsid_list.append(get_observation_id(tokens, list_pipeline))
+			output = pipeline_output(tokens, list_pipeline)
 			pass
 		pass
-	
+            
+	if -15 in output:
+		logging.info('Resuming observation.')
+		return True
+		pass
+
 	obsid = list(set(obsid_list))
         
 	if len(obsid) == 0:
@@ -256,6 +264,7 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_
 
 	logging.info('Cleaning working directory.')
 	shutil.rmtree(working_directory, ignore_errors = True)
+	
 	return True
 	pass
 	
@@ -316,7 +325,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 		return 1
 		pass
             
-	if float(observation_keys[0]) < 0.1:
+	if float(observation_keys[0]) < min_staging_fraction:
 		logging.info('Waiting for data being staged...')
 		time.sleep(3600)
 		return 1
@@ -587,7 +596,6 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 			filename2 = working_directory + '/' + obsid + '_SB' + startsb + '_uv.dppp.MS'
 			if os.path.exists(filename) or os.path.exists(filename2):
 				logging.warning('\033[33mFile \033[35m' + srm + '\033[33m is already on disk.')
-				lock_token(tokens, item['key'])
 				set_token_status(tokens, item['key'], 'unpacked')
 				set_token_output(tokens, item['key'], 0)
 				if 'ABN' in token.keys():
@@ -595,7 +603,17 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 						freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
 						pass
 					except IndexError:
-						freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename2 + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+						try:
+							freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename2 + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+							pass
+						except IndexError:
+							logging.warning('\033[33mFile \033[35m' + filename + '\033[33m is probably broken and will be removed.')
+							shutil.rmtree(filename, ignore_errors = True)
+							shutil.rmtree(filename2, ignore_errors = True)
+							srm_list.append(srm)
+							list_todownload2.append(item)
+							continue
+							pass
 						pass
 					update_freq(tokens, item['key'], freq)
 					pass
@@ -643,7 +661,7 @@ def download_data(url, token_value, working_directory, observation, server, user
 	tokens = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) # load token of done observation
 	set_token_status(tokens, token_value, 'downloading')
 	filename = working_directory + '/' + url.split('/')[-1]
-	download = subprocess.Popen(['globus-url-copy', url, 'file:' + filename], stdout=subprocess.PIPE)
+	download = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
 	errorcode = download.wait()
 	
 	if errorcode == 0:
@@ -1092,8 +1110,15 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 			obsid          = get_observation_id(tokens, list_done)
 			for item in list_done:
 				token = tokens.db[item['key']]
-				ABN   = str(token['ABN'])
 				srm = tokens.db.get_attachment(item['key'], 'srm.txt').read().strip()
+				ABN   = str(token['ABN'])
+				if ABN == '':
+					filename = working_directory + '/' + srm.split('/')[-1]
+					freq = os.popen('taql "select distinct REF_FREQUENCY from ' + filename.split('.MS')[0] + '.MS' + '/SPECTRAL_WINDOW" | tail -1').readlines()[0].rstrip('\n')
+					update_freq(tokens, item['key'], freq)
+					token = tokens.db[item['key']]
+					ABN = str(token['ABN'])
+					pass
 				s_list[ABN] = srm
 				pass
 			ABNs = slice_dicts(s_list, slice_size = num_SBs_per_group_var)
@@ -1211,9 +1236,9 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		pass
 
 	## remove old staging file
-	if is_running(working_directory + '/.' + observation):
-		os.remove(working_directory + '/.' + observation)
-		pass
+	#if is_running(working_directory + '/.' + observation):
+		#os.remove(working_directory + '/.' + observation)
+		#pass
 	
 	## reserve following processes
 	logging.info('Selected observation: \033[35m' + observation)
@@ -1234,6 +1259,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	tokens.add_view(view_name='packing',     cond=' doc.status == "packing" '    )
 	tokens.add_view(view_name='transferring',  cond=' doc.status == "transferring" ')
 	tokens.add_view(view_name='done', cond=' doc.done > 0  && doc.output == 0')	
+	tokens.add_view(view_name='overview_total', cond=' doc.lock > 0  || doc.lock == 0')
 	
 	## check for new data sets and get information about other tokens present
 	list_error     = tokens.list_tokens_from_view('error')     # check which tokens of certain type show errors
@@ -1314,17 +1340,45 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		list_pipeline_all      = tokens.list_tokens_from_view(pipeline)  ## get the pipeline list
 		list_pipeline          = tokens.list_tokens_from_view('temp')    ## get the pipeline list without download errors
 		list_pipeline_download = tokens.list_tokens_from_view('temp2')   ## get the pipeline list with    download errors
+		list_observation       = tokens.list_tokens_from_view('overview_total') ## get the list of the entire observation
 		status = pipeline_status(tokens, list_pipeline_all)
 		output = pipeline_output(tokens, list_pipeline_all)
 		if pipeline in bad_pipelines:
 			logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m shows errors. Please check its token status.')
-			if len(list_pipeline_download) > error_tolerance:        ## count download errors and check whether there are too many
+			if (len(list_pipeline_download) > error_tolerance):        ## count download errors and check whether there are too many
 				logging.warning('\033[33mPipeline \033[35m' + str(pipeline) + '\033[33m shows more than ' + str(error_tolerance) + ' errors. Script will try to rerun them.')
-				for item in list_pipeline_download:
-					unlock_token(tokens, item['key'])
+				if recursive:
+					break
 					pass
-				logging.info('Waiting for data being staged...')
-				time.sleep(3600)
+				logging.info('Checking current staging status...')
+				srm_list = []
+				for item in list_observation:
+					srm = tokens.db.get_attachment(item['key'], 'srm.txt').read().strip()
+					srm_list.append(srm)
+					pass
+				pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+				is_staged_list   = pool2.map(is_staged, srm_list)
+				staged_files     = sum(is_staged_list)
+				staging_fraction = staged_files / float(len(list_observation))
+				logging.info('The current staging fraction is: \033[35m' + str(staging_fraction))
+				if staging_fraction < min_staging_fraction:
+					logging.error('\033[31mFiles for pipeline \033[35m' + str(pipeline) + '\033[31m appears to get unstaged. Processing of \033[35m' + str(observation) + '\033[31m will be cancelled.')
+					#list_pipelines_total = tokens.list_tokens_from_view('overview_total')
+					for item in list_pipeline_all:
+						set_token_status(tokens, item['key'], 'error')
+						set_token_output(tokens, item['key'], -15)
+						set_token_progress(tokens, item['key'], 'Processing has been cancelled due to unstaged data.')
+						unlock_token(tokens, item['key'])
+						pass
+					os.remove(last_observation)
+					pass
+				else:
+					for item in list_pipeline_download:
+						unlock_token(tokens, item['key'])
+						pass
+					logging.info('Waiting for data being staged...')
+					time.sleep(3600)
+					pass
 				break
 				pass
 			pass
@@ -1369,9 +1423,9 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			continue
 			pass
 		elif ('unpacked' in status or 'queued' in status) and not 'unpacking' in status and not 'downloading' in status:
+			logging.error(str(locked_pipelines))  ## keep this until bug re-appears
+			logging.error(str(pipelines_done))    ## keep this until bug re-appears
 			if pipeline != locked_pipelines[0] and locked_pipelines[0] not in pipelines_done:
-				logging.error(str(locked_pipelines))  ## keep this until bug re-appears
-				logging.error(str(pipelines_done))    ## keep this until bug re-appears
 				for item in list_pipeline:
 					set_token_progress(tokens, item['key'], 'Previous pipeline has not been finished yet')
 					if  len(pipelines_done) > 0:
@@ -1396,7 +1450,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		elif 20 in output or 21 in output or 22 in output:
 			logging.warning('\033[33mAll necessary data for the pipeline \033[35m' + pipeline + '\033[33m are not yet available.')
 			if len(pipelines_done) > 0:
-				logging.warning('Resetting pipeline: \033[35m' + pipeline)
+				logging.info('Resetting pipeline: \033[35m' + pipeline)
 				tokens.reset_tokens(view_name=pipeline)
 				pass
 			break
@@ -1413,7 +1467,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	## last check
 	if set(pipelines) <= set(pipelines_done) and len(pipelines_todo) == 0:
 		logging.info('\033[0mNo tokens in database found to be processed.')
-		time.sleep(300)
 		pass
 	
 	## wait for processes to be finished
