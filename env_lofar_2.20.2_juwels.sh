@@ -1,5 +1,8 @@
 #!/usr/bin/env sh
 
+module use /gpfs/software/juwels/otherstages
+module load Stages/2018a
+
 module load GCC/5.5.0 MVAPICH2/2.3a-GDR
 module load FFTW/3.3.7
 module load Python/2.7.14
@@ -16,7 +19,7 @@ fi
 
 export LOSOTOROOT="${LOFAR_HOME}/software/losoto/current"
 
-export LOFARROOT=${LOFAR_INSTALL_DIR}/lofar/release
+export LOFARROOT=${LOFAR_INSTALL_DIR}/lofar/release 
 export LOCALROOT=${LOFAR_INSTALL_DIR}/local/release
 
 export LD_LIBRARY_PATH=${LOFARROOT}/lib64:${LD_LIBRARY_PATH}
