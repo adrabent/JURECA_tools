@@ -33,14 +33,14 @@ walltime = '01:00:00'                          ## walltime for the JUWELS queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
-max_dppp_threads_var = 12                      ## maximal threads per node per DPPP instance
-max_proc_per_node_limit_var = 6                ## maximal processes per node for DPPP
+max_dppp_threads_var = 19                      ## maximal threads per node per DPPP instance
+max_proc_per_node_limit_var = 5                ## maximal processes per node for DPPP
 num_proc_per_node_var = 10                     ## maximal processes per node for others
-error_tolerance = 2                            ## number of failed tokens still acceptable for running pipelines
+error_tolerance = 3                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
-min_staging_fraction = 0.25                    ## only process fields with this minimum fraction of staged data
+min_staging_fraction = 0.5                     ## only process fields with this minimum fraction of staged data
 
 
 os.system('clear')
@@ -306,13 +306,13 @@ def find_new_observation(observations, observation_done, server, user, password,
 				logging.warning('Invalid download URL in: \033[35m' + str(item['key']))
 				pass
 			pass
-		pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+		pool = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 2)
 		is_staged_list   = pool.map(is_staged, srm_list)
 		staged_files     = sum(is_staged_list)
 		staging_fraction = staged_files / float(len(list_todos))
 		logging.info('The staging status is: \033[35m' + str(100 * staging_fraction) + '%')
 		if str(staging_fraction) in staged_dict.keys():
-			staged_dict[str(staging_fraction + random.randint(1,100)/10000.)] = observation
+			staged_dict[str(staging_fraction + random.randint(1,100)/100000.)] = observation
 			pass
 		else:
 			staged_dict[str(staging_fraction)] = observation
@@ -325,13 +325,12 @@ def find_new_observation(observations, observation_done, server, user, password,
 		return 1
 		pass
             
-	if float(observation_keys[0]) < min_staging_fraction:
-		logging.info('Waiting for data being staged...')
-		time.sleep(3600)
-		return 1
-		pass
-
 	for observation_key in observation_keys:
+		if float(observation_key) < min_staging_fraction:
+			logging.info('Waiting for data being staged...')
+			time.sleep(3600)
+			return 1
+			pass
 		observation = staged_dict[observation_key]
 		logging.info('Checking observation: \033[35m' + observation)
 		tokens      = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) ## load token of certain type
@@ -447,6 +446,13 @@ def token_output(tokens, token_value):
 	token = tokens.db[token_value]
 	output = token['output']
 	return output
+	pass
+    
+def token_progress(tokens, token_value):
+	
+	token = tokens.db[token_value]
+	progress = str(token['progress'])
+	return progress
 	pass
 
 
@@ -632,7 +638,7 @@ def prepare_downloads(tokens, list_todos, pipeline_todownload, working_directory
 
 	## check whether data is staged
 	logging.info('Checking staging status of files in pipeline: \033[35m' + pipeline_todownload)
-	pool = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+	pool = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 2)
 	is_staged_list = pool.map(is_staged, srm_list)
 	
 	list_todownload = []
@@ -729,7 +735,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	pass
    
    
-def run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp):
+def run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp, last_observation):
   
 	parset     = working_directory + '/pipeline.parset'
 	parset2    = working_directory + '/pipeline2.parset'
@@ -776,7 +782,12 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 			os.remove(parset2)
 			pass
 		else:
-			tokens.get_attachment(item['key'], parsets[0], parset)
+			try:
+				tokens.get_attachment(item['key'], parsets[0], parset)
+			except IndexError:
+				logging.error('\033[31mNo valid parsets attached to: \033[35m' + observation + '\033[31m. Please check the tokens manually. Processing will be skipped.')
+				os.remove(last_observation)
+				return 1
 			pass
 		pass
 	
@@ -890,6 +901,17 @@ def pipeline_output(tokens, list_pipeline):
 	return output
 	pass
 
+def pipeline_progress(tokens, list_pipeline):
+	
+	progress = []
+	for item in list_pipeline:
+		progress.append(token_progress(tokens, item['key']))
+		pass
+	progress = list(set(progress))
+	
+	return progress
+	pass
+
 
 def update_freq(tokens, token_value, freq):
     
@@ -957,7 +979,7 @@ def submit_diagnostic_plots(tokens, token_value, images):
 	pass
 
 
-def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory):
+def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory, last_observation):
 
 	parset               = working_directory + '/pipeline.parset'
 	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
@@ -974,13 +996,16 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 		pass
 	tokens.add_attachment(token_value, open(slurm_log,'r'), os.path.basename(slurm_log))
 	
+	skip = False
 	if 'ERROR' in log_information:
 		for item in list_pipeline:
 			set_token_status(tokens, item['key'], 'error')
 			set_token_output(tokens, item['key'], 99)
 			set_token_progress(tokens, item['key'], log_information[log_information.find('genericpipeline:'):])
 			pass
-		time.sleep(43200)
+		#time.sleep(57600)
+		time.sleep(3600)
+		skip = True
 		pass
 	if 'error:' in log_information:
 		for item in list_pipeline:
@@ -988,7 +1013,9 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['key'], 99)
 			set_token_progress(tokens, item['key'], log_information[log_information.find('error:'):])
 			pass
-		time.sleep(43200)
+		#time.sleep(57600)
+		time.sleep(3600)
+		skip = True
 		pass
 	elif 'Error' in log_information:
 		for item in list_pipeline:
@@ -996,7 +1023,9 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_output(tokens, item['key'], 99)
 			set_token_progress(tokens, item['key'], log_information[log_information.find('Error:'):])
 			pass
-		time.sleep(43200)
+		#time.sleep(57600)
+		time.sleep(3600)
+		skip = True
 		pass
 	elif 'finished' in log_information:
 		for i, item in enumerate(list_pipeline):
@@ -1021,7 +1050,12 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			logging.info('Statefile has been removed.')
 			pass
 		pass
-	      
+	
+	if skip:
+		logging.error('Unresolved issue in the current processing of the observation occured. Processing will be cancelled.')
+		os.remove(last_observation)
+		pass
+	
 	return 0
 	pass
 
@@ -1144,8 +1178,17 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				pass
 			pass
 		elif pipeline == final_pipeline:
-			pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+			list_done_todo = []  ## in case a download failes, repeat only those files 
+			results_todo   = []  ## in case a download failes, repeat only those files 
 			for result, item in zip(results, list_done):
+				status = token_status(tokens, item['key'])
+				if status != 'transferred':
+					list_done_todo.append(item)
+					results_todo.append(result)
+					pass
+				pass
+			pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 2)
+			for result, item in zip(results_todo, list_done_todo):
 				token        = tokens.db[item['key']]
 				obsid        = str(token['OBSID'])
 				ABN          = str(token['ABN'])
@@ -1293,7 +1336,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		(list_todownload, download_list) = prepare_downloads(tokens, list_todos, pipelines_todo[0], working_directory)
 		gsilist   = download_list.gsi_links() # convert the srm list to a GSI list (proper URLs for GRID download)
 		gsilist   = sorted(list(set(gsilist))) # to re-reverse the list in order to match it for the upcoming loop and use only distinct files
-		pool      = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+		pool      = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 2)
 		for i, (url, item) in enumerate(zip(gsilist, list_todownload)):
 			pool.apply_async(download_data, args = (url, item['key'], working_directory, observation, server, pc.user, pc.password, pc.database,))
 			if (i + 1) % multiprocessing.cpu_count() == 0:
@@ -1318,7 +1361,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	## check which pipelines are done and if observation is finished
 	if len(pipelines_done) > 0 and not recursive:
 		logging.info('\033[0mPipeline(s) \033[35m' + str(pipelines_done) + '\033[0m are done.')
-		if set(pipelines) < set(pipelines_done) and len(pipelines_todo) == 0:
+		if (set(pipelines) < set(pipelines_done)) and (len(pipelines_todo) == 0) and (final_pipeline not in bad_pipelines):
 			logging.info('\033[0mObservation \033[35m' + observation + '\033[0m is done.')
 			tokens.del_view(view_name='downloading')
 			tokens.del_view(view_name='unpacking')
@@ -1356,7 +1399,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 					srm = tokens.db.get_attachment(item['key'], 'srm.txt').read().strip()
 					srm_list.append(srm)
 					pass
-				pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count())
+				pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 2)
 				is_staged_list   = pool2.map(is_staged, srm_list)
 				staged_files     = sum(is_staged_list)
 				staging_fraction = staged_files / float(len(list_observation))
@@ -1402,7 +1445,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 					set_token_progress(tokens, item['key'], 0)
 					pass
 			elif log_information != '':
-				submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory)
+				submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory, last_observation)
 				pass
 			break
 			pass
@@ -1411,7 +1454,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				logging.info('Pipeline \033[35m' + pipeline + '\033[32m is currently processed.')
 				pass
 			elif log_information != '':
-				submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory)
+				submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory, last_observation)
 				pass
 			break
 			pass
@@ -1436,12 +1479,12 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				pass
 			else:
 				logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be started.')
-				run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
+				run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp, last_observation)
 				break
 				pass
 		elif 99 in output or -1 in output or 3 in output:
 			logging.info('Pipeline \033[35m' + pipeline + '\033[32m will be resumed.')
-			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp)
+			run_prefactor(tokens, list_pipeline, working_directory, observation, submitted, slurm_files, pipeline, ftp, last_observation)
 			break
 			pass
 		elif 'transferred' in status:
