@@ -29,7 +29,7 @@ from GRID_LRT.couchdb.client import Server
 
 _version = '1.0'                               ## program version
 nodes = 24                                     ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime = '01:00:00'                          ## walltime for the JUWELS queue
+walltime = '01:30:00'                          ## walltime for the JUWELS queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
@@ -38,6 +38,7 @@ max_proc_per_node_limit_var = 5                ## maximal processes per node for
 num_proc_per_node_var = 10                     ## maximal processes per node for others
 error_tolerance = 3                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to be idenitified as new observations (usually the target pipeline)
+force_process = 'cal'                          ## if tokens only of that type exist, enforce processing
 final_pipeline = 'pref_targ2'                  ## name of final pipeline
 calibrator_results = 'pref_cal2'               ## name of pipeline where calibrator results might have been stored
 min_staging_fraction = 0.5                     ## only process fields with this minimum fraction of staged data
@@ -324,7 +325,7 @@ def find_new_observation(observations, observation_done, server, user, password,
 	if len(observation_keys) == 0:
 		return 1
 		pass
-            
+    
 	for observation_key in observation_keys:
 		if float(observation_key) < min_staging_fraction:
 			logging.info('Waiting for data being staged...')
@@ -342,13 +343,24 @@ def find_new_observation(observations, observation_done, server, user, password,
 			logging.warning('Observation: \033[35m' + observation + '\033[33m is invalid.')
 			continue
 			pass
-		for pipeline in pipelines_todo:
+		valid = True
+		for pipeline in pipelines_todo:       
 			if condition in pipeline:
 				check_passed = check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_directory)
 				if check_passed:   # it is a valid observation
 					return observation
 					pass
+				else:
+					valid = False
+					pass
 				pass
+			elif not force_process in pipeline:
+				valid = False
+				pass
+			pass
+		if valid:
+			logging.warning('Observation: \033[35m' + observation + '\033[33m does not show a target pipeline.')
+			return observation
 			pass
 		logging.warning('Observation: \033[35m' + observation + '\033[33m does not show a valid pipeline.')
 		pass
@@ -937,6 +949,12 @@ def check_submitted_job(slurm_log, submitted):
 		os.remove(submitted)
 		return log_information
 		pass
+	if 'error:' in log_information:
+		logging.error(log_information)
+		os.remove(submitted)
+		return log_information
+		pass
+	log_information = os.popen('tail -8 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'error:' in log_information:
 		logging.error(log_information)
 		os.remove(submitted)
