@@ -81,7 +81,7 @@ def add_coloring_to_emit_ansi(fn):
 
 def my_handler(type, value, tb):
 	exception = logger.critical("{0}".format(str(value)))
-	lock = os.environ['WORK'] + '/.lock'
+	lock = os.environ['SCRATCH_chtb00'] + '/htb006' '/.lock'
 	if os.path.exists(lock):
 		os.remove(lock)
 		pass
@@ -184,6 +184,7 @@ def check_for_corresponding_calibration_results(tokens, list_pipeline, cal_obsid
 	if errorcode == 0:
 		logging.info('Cleaning working directory.')
 		shutil.rmtree(working_directory, ignore_errors = True)
+		os.mkdir(working_directory)
 		logging.info('Transferring calibrator results for this field from: \033[35m' + results_fn)
 		filename = working_directory + '/' + cal_obsid + '.tar'
 		transfer  = subprocess.Popen(['globus-url-copy', results_fn, 'file:' + filename], stdout=subprocess.PIPE)
@@ -320,14 +321,18 @@ def find_new_observation(observations, observation_done, server, user, password,
 			pass
 		pass
     
+	print staged_dict.keys()
 	observation_keys = list(reversed(sorted(staged_dict.keys())))
+	print observation_keys
 
 	if len(observation_keys) == 0:
 		return 1
 		pass
     
 	for observation_key in observation_keys:
+		print observation_key
 		if float(observation_key) < min_staging_fraction:
+			print float(observation_key)
 			logging.info('Waiting for data being staged...')
 			time.sleep(3600)
 			return 1
@@ -701,7 +706,7 @@ def download_data(url, token_value, working_directory, observation, server, user
    
 def create_submission_script(submit_job, parset, working_directory, submitted):
 	
-	home_directory    = os.environ['HOME']
+	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	
 	if os.path.isfile(submit_job):
 		logging.warning('\033[33mFile for submission already exists. It will be overwritten.')
@@ -718,25 +723,25 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		IONEX_script         = os.popen('find ' + working_directory + ' -name download_IONEX.py ').readlines()[0].rstrip('\n').replace(' ','')
 		IONEX_path           = os.popen('grep ionex_path '           + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		jobfile.write('/gpfs' + IONEX_script + ' --destination ' + IONEX_path + ' --server ' + IONEX_server + ' /gpfs' + working_directory + '/' + target_input_pattern + '\n')
+		jobfile.write(IONEX_script + ' --destination ' + IONEX_path + ' --server ' + IONEX_server + ' ' + working_directory + '/' + target_input_pattern + '\n')
 		pass
 	except IndexError:
 		pass
 	try:
 		skymodel_script      = os.popen('find ' + working_directory + ' -name download_tgss_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
+		target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006', working_directory)
 		if os.path.exists(target_skymodel):
 			os.remove(target_skymodel)
 			pass
-		jobfile.write('/gpfs' + skymodel_script + ' /gpfs' + working_directory + '/' + target_input_pattern + ' /gpfs' + target_skymodel + '\n')
+		jobfile.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
 		pass
 	except IndexError:
 		pass
 	
 	## write-up of final command
 	jobfile.write('\n')
-	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' /gpfs' + home_directory + '/run_pipeline.sh /gpfs' + parset + ' /gpfs' + working_directory)
+	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_pipeline.sh ' + parset + ' ' + working_directory)
 	jobfile.close()
 	
 	os.system('chmod +x ' + submit_job)
@@ -819,7 +824,7 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)        + '/g" '       + parset)
 	
 	os.system('sed -i "s/\/Input//g " '                    + parset)
-	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$WORK/g" ' + parset)
+	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/\$SCRATCH_chtb00\/htb006/g" ' + parset)
 	
 	try:
 		makesourcedb         = os.popen('grep "! makesourcedb" '         + parset).readlines()[0].rstrip('\n').replace('/','\/')
@@ -864,6 +869,10 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		pass
 	
 	logging.info('Creating submission script in \033[35m' + submit_job)
+	if is_running(submitted) or is_running(submit_job):
+		logging.warning('Submission is already running')
+		return 0
+		pass
 	create_submission_script(submit_job, parset, working_directory, submitted)
 	
 	if os.path.exists(working_directory + '/pipeline/statefile'):
@@ -954,6 +963,11 @@ def check_submitted_job(slurm_log, submitted):
 		os.remove(submitted)
 		return log_information
 		pass
+	if 'termination' in log_information:
+		logging.error(log_information)
+		os.remove(submitted)
+		return log_information
+		pass
 	log_information = os.popen('tail -8 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'error:' in log_information:
 		logging.error(log_information)
@@ -1000,7 +1014,7 @@ def submit_diagnostic_plots(tokens, token_value, images):
 def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_directory, last_observation):
 
 	parset               = working_directory + '/pipeline.parset'
-	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
+	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006', working_directory)
 
 	for item in list_pipeline:
 		token_value = item['key']
@@ -1040,6 +1054,16 @@ def submit_error_log(tokens, list_pipeline, slurm_log, log_information, working_
 			set_token_status(tokens, item['key'], 'error')
 			set_token_output(tokens, item['key'], 99)
 			set_token_progress(tokens, item['key'], log_information[log_information.find('Error:'):])
+			pass
+		#time.sleep(57600)
+		time.sleep(3600)
+		skip = True
+		pass
+	elif 'termination' in log_information:
+		for item in list_pipeline:
+			set_token_status(tokens, item['key'], 'error')
+			set_token_output(tokens, item['key'], 99)
+			set_token_progress(tokens, item['key'], log_information[log_information.find('srun:'):])
 			pass
 		#time.sleep(57600)
 		time.sleep(3600)
@@ -1112,8 +1136,8 @@ def pack_and_transfer(token_value, filename, to_pack, pack_directory, transfer_f
 def submit_results(tokens, list_done, working_directory, observation, server, user, password, database, pipeline):
 
 	parset               = working_directory + '/pipeline.parset'
-	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
-	cal_values_directory = os.popen('grep cal_values_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$WORK', working_directory)
+	inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006', working_directory)
+	cal_values_directory = os.popen('grep cal_values_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006', working_directory)
 	calibration_h5       = glob.glob(inspection_directory + '/*.h5')
 	calibration_npy      = glob.glob(cal_values_directory + '/*.npy')
 	instrument_tables    = sorted(glob.glob(working_directory + '/pipeline/*cal/instrument'))
@@ -1121,7 +1145,7 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 	field_tables         = sorted(glob.glob(working_directory + '/pipeline/*cal/FIELD'))
 	
 	try:
-		results_directory = os.popen('grep "! results_directory" ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace('$WORK', working_directory).replace(' ','')
+		results_directory = os.popen('grep "! results_directory" ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace('$SCRATCH_chtb00/htb006', working_directory).replace(' ','')
 		results     = sorted(glob.glob(results_directory + '/*.ms'))
 	except IndexError:
 		results     = []
@@ -1154,7 +1178,7 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				tokens.delete_tokens(final_pipeline)
 				pass
 			logging.info('Tokens for the final pipeline \033[35m' + final_pipeline + '\033[32m are being created')
-			home_directory = os.environ['HOME']
+			home_directory = os.environ['$PROJECT_chtb00'] + '/htb006'
 			final_config   = home_directory + '/' + final_pipeline + '.cfg'
 			final_parset   = home_directory + '/' + final_pipeline + '.parset'
 			ts             = Token.TokenSet(tokens, tok_config = final_config)
@@ -1249,8 +1273,8 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/sandbox/', recursive = False):
 	
 	## load working environment
-	working_directory = os.environ['WORK']
-	home_directory    = os.environ['HOME']
+	working_directory = os.environ['SCRATCH_chtb00'] + '/htb006'
+	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	lock_file         = working_directory + '/.lock'
 	submitted         = working_directory + '/.submitted'
 	done              = working_directory + '/.done'
@@ -1318,7 +1342,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	tokens.add_view(view_name='processing',  cond=' doc.status == "processing" ' )
 	tokens.add_view(view_name='processed',   cond=' doc.status == "processed" '  )
 	tokens.add_view(view_name='packing',     cond=' doc.status == "packing" '    )
-	tokens.add_view(view_name='transferring',  cond=' doc.status == "transferring" ')
+	tokens.add_view(view_name='transferring', cond=' doc.status == "transferring" ')
+	tokens.add_view(view_name='transferred',  cond=' doc.status == "transferred" ')
 	tokens.add_view(view_name='done', cond=' doc.done > 0  && doc.output == 0')	
 	tokens.add_view(view_name='overview_total', cond=' doc.lock > 0  || doc.lock == 0')
 	
@@ -1389,6 +1414,7 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			tokens.del_view(view_name='processed')
 			tokens.del_view(view_name='packing')
 			tokens.del_view(view_name='transferring')
+			tokens.del_view(view_name='transferred')
 			subprocess.Popen(['touch', done])
 			pass
 		pass
@@ -1450,8 +1476,18 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			if recursive:
 				continue
 				pass
-			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m for this observation is broken. Tokens will be reset.')
-			tokens.reset_tokens(view_name=pipeline)
+			logging.warning('\033[33mPipeline \033[35m' + pipeline + '\033[33m for this observation is broken.')
+			#tokens.reset_tokens(view_name=pipeline)
+			if status[0] == 'error':
+				broken_tokens = tokens.list_tokens_from_view(status[1])
+				pass
+			else:
+				broken_tokens = tokens.list_tokens_from_view(status[0])
+				pass
+			for item in broken_tokens:
+				set_token_status(tokens, item['key'], 'error')
+				set_token_progress(tokens, item['value'], 'Unknown error')
+				pass
 			break
 			pass
 		elif 'submitted' in status:
@@ -1561,7 +1597,7 @@ if __name__=='__main__':
 	log.emit = add_coloring_to_emit_ansi(log.emit)
 	logging.root.addHandler(log)
 	
-	home_directory = os.environ['HOME']
+	home_directory = os.environ['PROJECT_chtb00'] + '/htb006'
 	LOG_FILENAME = home_directory + '/logs/' + str(datetime.datetime.utcnow().replace(microsecond=0).isoformat()) + '.log'
 	if not os.path.exists(home_directory + '/logs'):
 		os.makedirs(home_directory + '/logs')

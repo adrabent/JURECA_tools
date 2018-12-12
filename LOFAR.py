@@ -86,7 +86,7 @@ def create_pipeline_config(working_directory):
 			max_per_node    = os.popen('nproc').readlines()[0].rstrip('\n')
 			os.system('echo >> '                                     + pipeline_cfg)
 			os.system('echo [remote] >> '                            + pipeline_cfg)
-			os.system('echo method = slurm_srun >> '                 + pipeline_cfg)
+			os.system('echo method = slurm_srun      >> '            + pipeline_cfg)
 			os.system('echo max_per_node = ' + max_per_node + ' >> ' + pipeline_cfg)
 			pass
 		except IndexError:
@@ -167,7 +167,6 @@ if __name__=='__main__':
 	logging.info('Created pipeline configuration file: \033[34m' + working_directory + '/pipeline.cfg')
 
 	## creating pipeline parameter set
-	os.system('cp ' + args[0] + ' ' + working_directory + '/pipeline.parset')
 	logging.info('Created pipeline parset file: \033[34m' + working_directory + '/pipeline.parset')
 
 	# starting of generic pipeline

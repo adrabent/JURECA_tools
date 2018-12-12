@@ -7,7 +7,7 @@ module load GCC/5.5.0 MVAPICH2/2.3a-GDR
 module load FFTW/3.3.7
 module load Python/2.7.14
 
-export LOFAR_HOME=/gpfs/homea/htb00/htb006
+export LOFAR_HOME=$PROJECT_chtb00/htb006
 LOFAR_INSTALL_DIR="${LOFAR_HOME}/software/LOFAR/2.20.2-centos7"
 
 
