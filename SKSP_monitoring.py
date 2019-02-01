@@ -321,23 +321,20 @@ def find_new_observation(observations, observation_done, server, user, password,
 			pass
 		pass
     
-	print staged_dict.keys()
-	observation_keys = list(reversed(sorted(staged_dict.keys())))
-	print observation_keys
+	observation_keys = [float(i) for i in staged_dict.keys()]
+	observation_keys = list(reversed(sorted(observation_keys)))
 
 	if len(observation_keys) == 0:
 		return 1
 		pass
     
 	for observation_key in observation_keys:
-		print observation_key
-		if float(observation_key) < min_staging_fraction:
-			print float(observation_key)
+		if observation_key < min_staging_fraction:
 			logging.info('Waiting for data being staged...')
 			time.sleep(3600)
 			return 1
 			pass
-		observation = staged_dict[observation_key]
+		observation = staged_dict[str(observation_key)]
 		logging.info('Checking observation: \033[35m' + observation)
 		tokens      = Token.Token_Handler( t_type=observation, srv=server, uname=user, pwd=password, dbn=database) ## load token of certain type
 		list_todos  = tokens.list_tokens_from_view('todo')                                                         ## load all todo tokens        
@@ -360,6 +357,9 @@ def find_new_observation(observations, observation_done, server, user, password,
 					pass
 				pass
 			elif not force_process in pipeline:
+				valid = False
+				pass
+			elif len(pipelines_todo) < 2:
 				valid = False
 				pass
 			pass
@@ -775,11 +775,11 @@ def run_prefactor(tokens, list_pipeline, working_directory, observation, submitt
 		attachments = tokens.list_attachments(item['key'])
 		parsets = [i for i in attachments if 'parset' in i]
 		if len(parsets) != 1:
-				logging.error('\033[31mMultiple or no parsets attached to: \033[35m' + item['key'])
-				set_token_status(tokens, item['key'], 'error')
-				set_token_output(tokens, item['key'], 3)
-				set_token_progress(tokens, item['key'], 'Multiple or no parsets attached')
-				pass
+			logging.error('\033[31mMultiple or no parsets attached to: \033[35m' + item['key'])
+			set_token_status(tokens, item['key'], 'error')
+			set_token_output(tokens, item['key'], 3)
+			set_token_progress(tokens, item['key'], 'Multiple or no parsets attached')
+			pass
   		if os.path.isfile(parset):
 			tokens.get_attachment(item['key'], parsets[0], parset2)
 			if not filecmp.cmp(parset, parset2):
@@ -1178,7 +1178,7 @@ def submit_results(tokens, list_done, working_directory, observation, server, us
 				tokens.delete_tokens(final_pipeline)
 				pass
 			logging.info('Tokens for the final pipeline \033[35m' + final_pipeline + '\033[32m are being created')
-			home_directory = os.environ['$PROJECT_chtb00'] + '/htb006'
+			home_directory = os.environ['PROJECT_chtb00'] + '/htb006'
 			final_config   = home_directory + '/' + final_pipeline + '.cfg'
 			final_parset   = home_directory + '/' + final_pipeline + '.parset'
 			ts             = Token.TokenSet(tokens, tok_config = final_config)
@@ -1361,7 +1361,8 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 		pipelines_todo      = sorted(list(set(get_pipelines(tokens, list_todos ))))
 	except TypeError:
 		logging.error('\033[31mCould not find a corresponding token for the last observation \033[35m' + observation + '\033[31m. Please check the database for errors.')# Script will check for new observations in the next run.')
-		#os.remove(last_observation)
+                time.sleep(3600)
+		os.remove(last_observation)
 		return 1
 		pass
 	
@@ -1463,8 +1464,10 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 					for item in list_pipeline_download:
 						unlock_token(tokens, item['key'])
 						pass
-					logging.info('Waiting for data being staged...')
-					time.sleep(3600)
+					if len(list_pipeline_download) <= (len(list_observation) - staged_files):
+						logging.info('Waiting for data being staged...')
+						time.sleep(3600)
+						pass
 					pass
 				break
 				pass
