@@ -82,7 +82,7 @@
 ! error_tolerance           =  False
 ### Stuff that you probably don't need to modify
 # which steps to run 
-pipeline.steps=[mk_inspect_dir, createmap_target, combine_target_map, sortmap_target, do_sortmap_maps, dpppconcat, check_unflagged, check_unflagged_map, sky_tar, create_target_model_map, make_sourcedb_target, expand_sourcedb_target, gsmcal_parmmap, gsmcal_solve, gsmcal_apply, h5_imp_gsmsol_map, mk_results_dir, make_results_mapfile, move_results, old_plot_gsmphases, createmap_plots, copy_plots] #h5imp_gsmsol, plot_gsm_phases, gsmcal_antmap, make_structurefunction, old_plot_gsmphases, copy_plots, mk_results_dir, make_results_mapfile, move_results]
+pipeline.steps=[mk_inspect_dir, createmap_target, combine_target_map, sortmap_target, do_sortmap_maps, dpppconcat, check_unflagged, check_unflagged_map, sky_tar, create_target_model_map, make_sourcedb_target, expand_sourcedb_target, gsmcal_parmmap, gsmcal_solve, gsmcal_apply, h5_imp_gsmsol_map, mk_results_dir, make_results_mapfile, old_plot_gsmphases, createmap_plots, copy_plots, move_results] #h5imp_gsmsol, plot_gsm_phases, gsmcal_antmap, make_structurefunction, old_plot_gsmphases, copy_plots, mk_results_dir, make_results_mapfile, move_results]
 
 # create the inspection_directory if needed
 mk_inspect_dir.control.kind               =  plugin
@@ -210,11 +210,11 @@ gsmcal_parmmap.control.filename           =  gsmcal_parmdbs.mapfile
 # solve for phase-only calibration solutions
 # solve and apply are seperate to allow to solve on a subset of baselines but apply to all
 gsmcal_solve.control.type                             = dppp
-gsmcal_solve.control.environment                      = {OMP_NUM_THREADS: 12}
+# gsmcal_solve.control.environment                      = {OMP_NUM_THREADS: 12}
 gsmcal_solve.control.error_tolerance                  = {{ error_tolerance }}
 gsmcal_solve.control.inplace                          = True
 gsmcal_solve.control.max_per_node                     = {{ num_proc_per_node_limit }}
-gsmcal_solve.argument.numthreads                      = {{ max_dppp_threads }}
+gsmcal_solve.argument.numthreads                      = 96
 gsmcal_solve.argument.msin                            = check_unflagged_map.output.mapfile
 gsmcal_solve.argument.msin.datacolumn                 = DATA
 gsmcal_solve.argument.msin.baseline                   = CS*&; RS*&; CS*&RS*
@@ -270,7 +270,7 @@ h5imp_gsmsol.argument.compression    =  7
 plot_gsm_phases.control.kind                          =  recipe
 plot_gsm_phases.control.type                          =  executable_args
 plot_gsm_phases.control.executable                    =  {{ losoto_executable }}
-plot_gsm_phases.control.max_per_node                  =  {{ num_proc_per_node }}
+plot_gsm_phases.control.max_per_node                  =  input.output.max_per_node
 plot_gsm_phases.control.parsetasfile                  =  True
 plot_gsm_phases.control.args_format                   =  losoto
 plot_gsm_phases.control.mapfiles_in                   =  [h5imp_gsmsol.output.h5parm.mapfile]

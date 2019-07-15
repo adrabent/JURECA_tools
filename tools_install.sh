@@ -1,7 +1,6 @@
 #!/usr/bin/env sh
 module use /usr/local/software/jureca/OtherStages
 module load Stages/2017b
-module load Stages/2017b 
 module load CMake/3.9.4
 export CC=/usr/local/software/jureca/Stages/2017b/software/GCCcore/5.4.0/bin/gcc
 export CXX=/usr/local/software/jureca/Stages/2017b/software/GCCcore/5.4.0/bin/g++
