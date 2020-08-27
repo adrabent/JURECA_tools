@@ -3,7 +3,7 @@
 process1=globus-url-copy
 process2=uberftp
 
-timeout=1h
+timeout=2h
 while [ 1 ]
 do
 	if [[ "$(uname)" = "Linux" ]]

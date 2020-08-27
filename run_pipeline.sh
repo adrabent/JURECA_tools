@@ -2,6 +2,6 @@
 
 env | grep SLURM
 
-. $PROJECT_chtb00/htb006/env_lofar_2.20.2_juwels.sh
+. $PROJECT_chtb00/htb006/env_lofar_3.0_juwels.sh
 
-./LOFAR.py -c $1 $2
+$PROJECT_chtb00/htb006/LOFAR.py -c $1 $2

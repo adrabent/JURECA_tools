@@ -62,6 +62,7 @@ def create_pipeline_config(working_directory):
 		default_clusterdesc = os.popen('grep clusterdesc '        + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_logfile     = os.popen('grep log_file '           + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		default_xml         = os.popen('grep xml_stat_file '      + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
+		default_tasks       = os.popen('grep task_files '         + default_config + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		pipeline_cfg        = working_directory + '/pipeline.cfg'
 		plugins_directory   = os.popen('find ' + working_directory           + ' -type d | grep plugins').readlines()[0].rstrip('\n').replace(' ','')
 		recipes_directory   = plugins_directory[:plugins_directory.find(plugins_directory.split('/')[-1])]
@@ -79,6 +80,7 @@ def create_pipeline_config(working_directory):
 							  .replace(default_recipe, default_recipe.rstrip(']') + ',' + recipes_directory + ']')\
 							  .replace(default_clusterdesc, '%(lofarroot)s/share/local.clusterdesc')\
 							  .replace(default_logfile, '%(runtime_directory)s/%(job_name)s/logs/%(start_time)s/pipeline.log')\
+							  .replace(default_logfile, '%(lofarroot)s/share/pipeline/tasks.cfg')\
 							  .replace(default_xml, '%(runtime_directory)s/%(job_name)s/logs/%(start_time)s/statistics.xml'))
 					pass
 
@@ -167,11 +169,11 @@ if __name__=='__main__':
 	logging.info('Created pipeline configuration file: \033[34m' + working_directory + '/pipeline.cfg')
 
 	## creating pipeline parameter set
-	logging.info('Created pipeline parset file: \033[34m' + working_directory + '/pipeline.parset')
+	#logging.info('Created pipeline parset file: \033[34m' + working_directory + '/pipeline.parset')
 
 	# starting of generic pipeline
 	logging.info('Calibration is starting \033[5m...')
-	os.system('genericpipeline.py ' + working_directory + '/pipeline.parset -d -c ' + working_directory + '/pipeline.cfg')
+	os.system('genericpipeline.py ' + args[0] + ' -d -c ' + working_directory + '/pipeline.cfg')
 	
 	# calibration has been finished
 	logging.info('\033[30;4mCalibration has been finished.')
