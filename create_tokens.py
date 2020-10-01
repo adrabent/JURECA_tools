@@ -34,6 +34,20 @@ def undone_token(token):
 	logging.info('Token \033[35m' + token['_id'] + '\033[32m is undone.')
 	pass
 
+def lock_token(token):
+	
+	token['lock'] = time.time()
+	token.save()
+	logging.info('Token \033[35m' + token['_id'] + '\033[32m has been locked.')
+	pass
+
+def lock_token_done(token):
+	
+	token['done'] = time.time()
+	token.save()
+	logging.info('Token \033[35m' + token['_id'] + '\033[32m is done.')
+	pass
+
 def unlock_token(token):
 	
 	token['lock'] = 0
@@ -41,7 +55,7 @@ def unlock_token(token):
 	print('Token \033[35m' + token['_id'] + '\033[32m has been unlocked.')
 	pass
 
-observation = 'pref3_GJ1151_L785239'
+observation = 'pref3_targ_P212_02_L696231'
 home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 pc     = PicasCred(home_directory + '/.picasrc')
 client   = CouchDB(pc.user, pc.password, url = server, connect = True)
@@ -51,7 +65,8 @@ tokens = TokenList(database = db, token_type = observation)
 #tokens._design_doc.delete_view('overview_total')
 #tokens._design_doc.delete_view('pipeline_todo')
 
-list_p = tokens.list_view_tokens('pref3_cal')
+list_p = tokens.list_view_tokens('pref3_targ1')
+#list_p = tokens.list_view_tokens('pref3_cal')
 
 #for item in list_p:
     #item.delete()
@@ -63,6 +78,9 @@ list_p = tokens.list_view_tokens('pref3_cal')
 for item in list_p:
     #item.delete()
     #undone_token(item)
-    #unlock_token(item)
-    #set_token_status(item, 'queued')
-    set_token_status(item, 'submitted')
+    unlock_token(item)
+    #lock_token(item)
+    #lock_token_done(item)
+    #set_token_status(item, 'transferred')
+    #set_token_status(item, 'submitted')
+    set_token_status(item, 'queued')

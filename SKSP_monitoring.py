@@ -37,7 +37,7 @@ mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
 max_dppp_threads_var = 24                      ## maximal threads per node per DPPP instance (max 96 on JUWELS)
-max_proc_per_node_limit_var = 3                ## maximal processes per node for DPPP
+max_proc_per_node_limit_var = 4                ## maximal processes per node for DPPP
 num_proc_per_node_var = 10                     ## maximal processes per node for others
 error_tolerance = 0                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to get checked for pre-existing data (usually the target pipeline)
@@ -116,8 +116,6 @@ def get_observations_todo(db, designs):
 	observations = []
 	
 	for design in designs:
-		#if 'pref3' not in design:
-			#continue
 		tokens = TokenList(database = db, token_type = design)
 		list_todos = tokens.list_view_tokens('todo')
 		try:
@@ -175,18 +173,9 @@ def get_cal_solutions(list_todos):
 
 def check_for_corresponding_calibration_results(tokens, list_pipeline, cal_solution, working_directory):
     
-	#for token in list_pipeline:
-		#break
-		#pass
-    
-	#results_dir = '/'.join(token['RESULTS_DIR'].split('/')[:-2]) + '/prefactor_v' + pref_version + '/' + calibrator_results + '/' + cal_obsid
-	#results_dir = '/'.join(token['RESULTS_DIR'].split('/')[:-2]) + '/' + calibrator_results + '/' + cal_obsid
-	#results_fn  = results_dir + '/' + cal_obsid + '.tar'
 	existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
 	errorcode = existence.wait()
 	if errorcode == 0:
-		#logging.info('Cleaning working directory.')
-		#shutil.rmtree(working_directory, ignore_errors = True)
 		logging.info('Transferring calibrator results for this field from: \033[35m' + cal_solution)
 		filename = working_directory + '/' + os.path.basename(cal_solution)
 		if not os.path.exists(working_directory):
@@ -262,14 +251,9 @@ def check_for_corresponding_pipelines(tokens, pipeline, pipelines_todo, working_
 	obsid = list(set(obsid_list))
         
 	if len(obsid) == 0:
-		#logging.warning('\033[33mCould not find the following calibrator observation: \033[35m' + cal_obsid)
 		logging.warning('Could not find a calibrator observation')
 		return check_for_corresponding_calibration_results(tokens, list_pipeline, cal_solutions, working_directory)
 		pass
-	#elif len(obsid) > 1 or obsid[0] not in cal_obsid:
-		#logging.warning('\033[33mNo corresponding target pipeline found for: \033[35m' + obsid[0])
-		#return False
-		#pass
 	
 	return True
 	pass
@@ -555,26 +539,6 @@ def pack_and_transfer(token_id, filename, to_pack, pack_directory, transfer_fn, 
 		set_token_output(token, 0)
 		logging.info('Packing of \033[35m' + filename + '\033[32m finished.')
 		transfer_successful = transfer_data(token, filename, transfer_fn, to_pack)
-		#if transfer_successful:
-			#if 'prep_cal' in to_pack_list[0]:
-				#if os.path.exists(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]+ 'prep_cal'):
-					#shutil.rmtree(working_directory + '/' + to_pack_list[0].split('prep_cal')[0].split('/')[-1]+ 'prep_cal', ignore_errors = True)
-					#pass
-				#shutil.move(to_pack_list[0].split('prep_cal')[0] + 'prep_cal', working_directory + '/.')
-				#pass
-			#if 'pre-cal' in to_pack_list[0]:
-				#if os.path.exists(working_directory + '/' + to_pack_list[0].split('/')[-1]):
-					#shutil.rmtree(working_directory + '/' + to_pack_list[0].split('/')[-1], ignore_errors = True)
-					#pass
-				#if 'MHz' in to_pack_list[0]:
-					#shutil.rmtree(to_pack_list[0])
-					#pass
-				#else:
-					#shutil.move(to_pack_list[0], working_directory + '/.')
-					#pass
-				#pass
-			#pass
-		#pass
 	else:
 		logging.error('\033[31mPacking failed, error code: ' + str(errorcode))
 		set_token_status(token, 'error')
@@ -628,7 +592,6 @@ def unpack_data(token, filename, working_directory):
 
 def prepare_downloads(list_todos, pipeline_todownload, working_directory):
   
-	#download_list    = srmlist.srmlist() # create list to download
 	list_todownload  = [item for item in list_todos if item['PIPELINE_STEP'] == pipeline_todownload] # filter list to a certain pipeline
 	srm_list         = []
 	list_todownload2 = []
@@ -650,7 +613,6 @@ def prepare_downloads(list_todos, pipeline_todownload, working_directory):
 						except IndexError:
 							logging.warning('\033[33mFile \033[35m' + filename + '\033[33m is probably broken and will be removed.')
 							shutil.rmtree(filename, ignore_errors = True)
-							#shutil.rmtree(filename2, ignore_errors = True)
 							srm_list.append(str(entry))
 							list_todownload2.append(item)
 							continue
@@ -704,7 +666,6 @@ def prepare_downloads(list_todos, pipeline_todownload, working_directory):
 				continue
 				pass
 			logging.info('File \033[35m' + str(srm_file) + '\033[32m is properly staged.')
-			#set_token_progress(item, str(item['progress']).replace('\n' + str(srm_file),''))
 			download_list2 = srmlist.srmlist()
 			download_list2.append(str(srm_file))
 			gsi = list(download_list2.gsi_links())[0]
@@ -718,14 +679,7 @@ def prepare_downloads(list_todos, pipeline_todownload, working_directory):
      
      
 def download_data(url, token_id, working_directory, observation, user, password, server, database):
-#def download_data(url, token_id, working_directory, observation):
-#def download_data(url, token, working_directory, observation, user, password, server, database):
-  
-	#tokens     = TokenList(database = db, token_type = observation)
-	#token_list = tokens.list_view_tokens('overview_total')
-	#index      = [ i for i,entry in enumerate(token_list) if entry['_id'] == token_id ][0]
-	#print(token_list[index])
-	#set_token_status(token, 'downloading')
+
 	filename   = working_directory + '/' + url.split('/')[-1]
 	download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
 	errorcode  = download.wait()
@@ -777,8 +731,6 @@ def create_submission_script(submit_job, parset, working_directory, submitted, o
 	## extracting directories for IONEX and the TGSS ADR skymodel
 	try:
 		IONEX_script         = os.popen('find ' + working_directory  +                  ' -name createRMh5parm.py ').readlines()[0].rstrip('\n').replace(' ','')
-		#IONEX_path           = os.popen('grep ionex_path '           + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
-		#IONEX_server         = os.popen('grep ionex_server '         + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"=" | cut -f1 -d"#"').readlines()[0].rstrip('\n').replace(' ','')
 		cal_solutions        = os.popen('grep cal_solutions '        + parset + ' | cut -f2- -d"=" | cut -f1 -d"#"').readlines()[0].rstrip('\n').replace(' ','')
 		jobfile.write(IONEX_script + ' --ionexpath ' + working_directory + '/pipeline/. --server ' + IONEX_server + ' --solsetName target ' + working_directory + '/' + target_input_pattern + ' ' + cal_solutions + '\n')
@@ -788,7 +740,6 @@ def create_submission_script(submit_job, parset, working_directory, submitted, o
 	try:
 		skymodel_script      = os.popen('find ' + working_directory  +         ' -name download_skymodel_target.py').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"=" | cut -f1 -d"#"').readlines()[0].rstrip('\n').replace(' ','')
-		#target_skymodel      = os.popen('grep target_skymodel '      + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006/' + observation, working_directory)
 		target_skymodel      = working_directory + '/pipeline/target.skymodel'
 		if os.path.exists(target_skymodel):
 			os.remove(target_skymodel)
@@ -888,7 +839,6 @@ def run_prefactor(list_pipeline, working_directory, observation, submitted, slur
 	os.system('sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)             + '/g" ' + parset)
 	
 	os.system('sed -i "s/\/Input//g                  " '                           + parset)
-	#os.system('sed -i "s/Output/results/g        " '                               + parset)
 	os.system('sed -i "s/\$RUNDIR/' + working_directory.replace('/','\/') + '/g" ' + parset)
 	os.system('sed -i "s/PREFACTOR_SCRATCH_DIR/' + working_directory.replace('/','\/') + '/g" ' + parset)
 	if pipeline == final_pipeline:
@@ -898,22 +848,9 @@ def run_prefactor(list_pipeline, working_directory, observation, submitted, slur
 		os.system('sed -i "s/\/prefactor\//\/results\//g " '                                    + parset)
 		pass
 	
-	#try:
-		#makesourcedb         = os.popen('grep "! makesourcedb" '         + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		#flagging_strategy    = os.popen('grep "! flagging_strategy" '    + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		#num_SBs_per_group    = os.popen('grep "! num_SBs_per_group" '    + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		
-		#os.system('sed -i "s/' + makesourcedb            + '/! makesourcedb            = \$LOFARROOT\/bin\/makesourcedb/g " '                + parset)
-		#os.system('sed -i "s/' + flagging_strategy       + '/! flagging_strategy       = \$LOFARROOT\/share\/rfistrategies\/HBAdefault/g " ' + parset)
-		#os.system('sed -i "s/' + num_SBs_per_group       + '/! num_SBs_per_group       = ' + str(num_SBs_per_group_var)       + '/g" '       + parset)
-        
-	#except IndexError:
-		#pass
-
 	## downloading prefactor
 	filename = working_directory + '/prefactor.tar'
 	logging.info('Downloading current prefactor version from \033[35m' + sandbox + '\033[32m to \033[35m' + working_directory + '/prefactor')
-	#download = subprocess.Popen(['globus-url-copy', sandbox , 'file:' + filename], stdout=subprocess.PIPE)
 	if os.path.exists(working_directory + '/prefactor'):
 		logging.warning('Overwriting old prefactor directory...')
 		shutil.rmtree(working_directory + '/prefactor', ignore_errors = True)
@@ -991,18 +928,6 @@ def pipeline_output(list_pipeline):
 	return output
 	pass
 
-#def pipeline_progress(list_pipeline):
-	
-	#progress = []
-	#for item in list_pipeline:
-		#progress.append(item['progress'])
-		#pass
-	#progress = list(set(progress))
-	
-	#return progress
-	#pass
-
-
 def update_freq(token, freq):
     
 	A_SBN = int(round((((float(freq)/1e6 - 100.0) / 100.0) * 512.0),0))
@@ -1063,8 +988,6 @@ def submit_diagnostic_plots(token, images):
 	for image in images:
 		logging.info('Upload inspection plot \033[35m' + image + '\033[32m to token \033[35m' + token['_id'])
 		token.put_attachment(os.path.basename(image), 'image/png', open(image, 'r'))
-		#os.remove(image)
-		#logging.info('File \033[35m' + image + '\033[32m was removed.')
 		pass
 	      
 	return 0
@@ -1140,15 +1063,12 @@ def submit_error_log(list_pipeline, slurm_log, log_information, working_director
 			if i == 0 and len(images2) == 0:
 				submit_diagnostic_plots(item, images)
 				pass
-			#if i < len(list_pipeline) - 1 and len(images2) > 0 and i < len(images2) - 1:
 			if len(images2) > 0 and i < len(images2):
 				if i == 0:
 					submit_diagnostic_plots(item, images)
 					pass
 				submit_diagnostic_plots(item, [images2[i]])
 				submit_diagnostic_plots(item, [images3[i]])
-				#os.remove(images2[0])
-				#os.remove(images3[0])
 				pass
 			pass
                     
@@ -1196,35 +1116,13 @@ def submit_results(tokens, list_done, working_directory, observation, user, pass
 	results_directory = os.popen('grep results_directory '    + parset + ' | cut -f2- -d"=" | cut -f-1 -d"#"').readlines()[0].rstrip('\n').replace(' ','')
 	results           = sorted(glob.glob(results_directory + '/*.ms'))
 	
-	print(results_directory)
-	#print results
-	#inspection_directory = os.popen('grep inspection_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006/' + observation, working_directory)
-	#cal_values_directory = os.popen('grep cal_values_directory ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace(' ','').replace('$SCRATCH_chtb00/htb006/' + observation, working_directory)
-
-	#calibration_h5       = glob.glob(inspection_directory + '/*.h5')
-	#calibration_npy      = glob.glob(cal_values_directory + '/*.npy')
-	#instrument_tables    = sorted(glob.glob(working_directory + '/pipeline/*cal/instrument'))
-	#antenna_tables       = sorted(glob.glob(working_directory + '/pipeline/*cal/ANTENNA'))
-	#field_tables         = sorted(glob.glob(working_directory + '/pipeline/*cal/FIELD'))
-	
-	#try:
-		#results_directory = os.popen('grep "! results_directory" ' + parset + ' | cut -f2- -d"="').readlines()[0].rstrip('\n').replace('$SCRATCH_chtb00/htb006/' + observation, working_directory).replace(' ','')
-		#logging.error(results_directory)
-		
-	#except IndexError:
-		#results     = []
-		#pass
-              
 	# upload calibration results
-	#if len(instrument_tables) > 0 and len(antenna_tables) > 0 and len(field_tables) > 0:
 	if calibrator_results in pipeline:
 		for item in list_done:
 			sbnumber     = str(item['STARTSB'])
 			obsid        = str(item['OBSID'])
-			#transfer_dir = (item['RESULTS_DIR'] + '/' + obsid).replace(' ','')
 			transfer_dir = (item['RESULTS_DIR']).replace(' ','')
 			subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
-			#to_pack      = instrument_table + ' ' + antenna_table + ' ' + field_table
 			filename     = working_directory + '/' + pipeline + '_' + obsid + '.tar'
 			transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
 			pack_and_transfer(item['_id'], filename, results_directory, results_directory + '/..', transfer_fn, user, password, server, database, observation)
@@ -1238,18 +1136,14 @@ def submit_results(tokens, list_done, working_directory, observation, user, pass
 		if pipeline != final_pipeline and len(list_pipeline_done) == 0:
 			list_final_pipeline = tokens.list_view_tokens(final_pipeline)                    ## get the final pipeline list
 			if len(list_final_pipeline) > 0:
-				#tokens.delete_tokens(final_pipeline)
 				tokens.delete_all(final_pipeline)
 				pass
 			logging.info('Tokens for the final pipeline \033[35m' + final_pipeline + '\033[32m are being created')
 			home_directory = os.environ['PROJECT_chtb00'] + '/htb006'
 			client   = CouchDB(user, password, url = server, connect = True)
 			db = client[database]
-			#final_config   = home_directory + '/tools/GRID_LRT2/GRID_LRT/data/config/steps/targ2_pref3.json'
-			#final_parset   = home_directory + '/tools/GRID_LRT2/GRID_LRT/data/parsets/Pre-Facet-Target2-v3.parset'
 			final_config   = home_directory + '/targ2_pref3.json'
 			final_parset   = home_directory + '/Pre-Facet-Target2-v3.parset'
-			#ts             = Token.TokenSet(tokens, tok_config = final_config)
 			s_list         = {}
 			obsid          = get_observation_id(list_done)
 			for item in list_done:
@@ -1276,7 +1170,6 @@ def submit_results(tokens, list_done, working_directory, observation, user, pass
 				token['OBSID'] = obsid
 				token['PIPELINE_STEP'] = final_pipeline
 				token['output'] = 0
-				#token['CAL2_SOLUTIONS'] = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/diskonly/pipelines/SKSP/prefactor_v3.0/pref_cal/' + cal_obsid + '/' + cal_obsid + '_pref3_cal_000_.tar'
 				token['status'] = 'queued'
 				token.save()
 				with open('temp_srm.txt', 'wb') as f:
@@ -1286,16 +1179,6 @@ def submit_results(tokens, list_done, working_directory, observation, user, pass
 				token.add_attachment(attachment_name = 'Pre-Facet-Target2-v3.parset', filename = final_parset)
 				lock_token(token)
 				tokens.append(token)
-			#list_final_pipeline = tokens.list_view_tokens(final_pipeline)  ## get the final pipeline list again
-			#for item in list_final_pipeline:
-				#token['OBSID'] = obsid
-				#tokens.db.update([token])
-				#target_input_pattern = os.popen('grep "! target_input_pattern" ' + final_parset).readlines()[0].rstrip('\n').replace('/','\/')
-				#os.system('sed -i "s/' + target_input_pattern + '/! target_input_pattern = ' + obsid + '\*.ms/g " ' + final_parset)
-				#tokens.add_attachment(item.id, open(final_parset, 'rb'), final_parset.split('/')[-1])
-				#lock_token(item)
-				#os.system('sed -i "s/! target_input_pattern = ' + obsid + '\*.ms/' + target_input_pattern + '/g " ' + final_parset)
-				#pass
 			for item, result in zip(list_done, results):
 				if os.path.exists(working_directory + '/' + result.split('/')[-1]):
 					shutil.rmtree(working_directory + '/' + result.split('/')[-1])
@@ -1330,7 +1213,6 @@ def submit_results(tokens, list_done, working_directory, observation, user, pass
 			pool2.close()
 			pool2.join()
 			results = sorted(glob.glob(results_directory + '/*.ms'))
-			print(results)
 			if len(results) == 0:
 				shutil.move(working_directory + '/pipeline.log', results_directory + '/.')
 				pack_and_transfer(item['_id'], filename, results_directory, results_directory + '/..', transfer_fn, user, password, server, database, observation)
@@ -1338,36 +1220,9 @@ def submit_results(tokens, list_done, working_directory, observation, user, pass
 			pass
 		pass
     
-	#elif len(calibration_h5) == 1 and len(calibration_npy) > 0 and condition not in pipeline:
-		#h5parms = glob.glob(working_directory + '/pipeline/*.h5')
-		#for h5parm in h5parms:
-			#os.remove(h5parm)
-			#pass
-		##tokens.delete_tokens(final_pipeline)
-		#for item in list_done:
-			#token = tokens.db[item['key']]
-			#break
-			#pass
-		#obsid        = str(token['OBSID'])
-		#transfer_dir = (token['RESULTS_DIR'] + '/' + obsid).replace(' ','')
-		#to_pack      = calibration_h5[0] + ' ' + ' '.join(calibration_npy)
-		#subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
-		#filename     = working_directory + '/' + obsid + '.tar'
-		#transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
-		#pack_and_transfer(item, filename, to_pack, working_directory, transfer_fn)
-		#pass
-	
 	logging.info('Submitting results for \033[35m' + pipeline + '\033[32m has been finished.')
 	return 0
 	pass
-
-
-#def token_list(tokens, view):
-	#return tokens.list_view_tokens(view)
-	#pass
-    
-#def 
-
 
 def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/sandbox/', recursive = False):
 	
@@ -1481,23 +1336,15 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 			os.remove(done)
 			pass
 		(list_todownload, download_list) = prepare_downloads(list_todos, pipelines_todo[0], working_directory)
-		#gsilist   = download_list.gsi_links()  # convert the srm list to a GSI list (proper URLs for GRID download)
-		#gsilist   = sorted(list(set(gsilist))) # to re-reverse the list in order to match it for the upcoming loop and use only distinct files
 		pool      = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 2)
-		#print(download_list)
 		for url in download_list:
-		#for token, url in zip(list_todownload, download_list):
-			#result = pool.apply_async(download_data, args = (url, list_todownload[url], working_directory, observation, ))
 			token = caToken(token_id = list_todownload[url], token_type = observation, database = db)
 			token.fetch()
 			if token['output'] == 0 and token['status'] != 'downloading':
 				set_token_status(token, 'downloading')
 				pass
 			result = pool.apply_async(download_data, args = (url, list_todownload[url], working_directory, observation, pc.user, pc.password, server, pc.database,))
-			#result = pool.apply_async(download_data, args = (url, item, working_directory, observation, pc.user, pc.password, server, pc.database,))
-			#result.get()
 			pass
-		#result.get()
 		pool.close()
 		pool.join()
 		pass
@@ -1570,7 +1417,6 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 				pool2 = multiprocessing.Pool(processes = multiprocessing.cpu_count() / 4)
 				is_staged_list   = pool2.map(is_staged, srm_list)
 				staged_files     = sum(is_staged_list)
-				#staging_fraction = staged_files / float(len(list_observation))
 				staging_fraction = staged_files / float(len(srm_list))
 				logging.info('The current staging fraction is: \033[35m' + str(staging_fraction))
 				for item in list_pipeline_download:
