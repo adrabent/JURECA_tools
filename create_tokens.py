@@ -55,7 +55,7 @@ def unlock_token(token):
 	print('Token \033[35m' + token['_id'] + '\033[32m has been unlocked.')
 	pass
 
-observation = 'pref3_P137_02_L745156'
+observation = 'pref3_targ_P126_02_L745146'
 home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 pc     = PicasCred(home_directory + '/.picasrc')
 client   = CouchDB(pc.user, pc.password, url = server, connect = True)
@@ -65,8 +65,8 @@ tokens = TokenList(database = db, token_type = observation)
 #tokens._design_doc.delete_view('overview_total')
 #tokens._design_doc.delete_view('pipeline_todo')
 
-#list_p = tokens.list_view_tokens('pref3_targ1')
-list_p = tokens.list_view_tokens('pref3_cal')
+list_p = tokens.list_view_tokens('pref3_targ1')
+#list_p = tokens.list_view_tokens('pref3_cal')
 
 #for item in list_p:
     #item.delete()

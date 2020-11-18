@@ -2,7 +2,7 @@
 
 export PROJECT=$PROJECT_chtb00/htb006
 
-export PYTHONPATH=$PROJECT/tools/GRID_LRT2:${PYTHONPATH}
+export PYTHONPATH=$PROJECT/tools/GRID_LRT:${PYTHONPATH}
 export PYTHONPATH=$PROJECT/tools/GRID_PiCaS_Launcher:${PYTHONPATH}
 export PYTHONPATH=$PROJECT/tools/cloudant/lib/python2.7/site-packages:${PYTHONPATH}
 
