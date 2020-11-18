@@ -9,8 +9,8 @@ export PYTHONPATH=$PROJECT/tools/cloudant/lib/python2.7/site-packages:${PYTHONPA
 ## source casacore
 export LOFAR_HOME=$PROJECT_chtb00/htb006/software
 export LOFAR_INSTALL_DIR=${LOFAR_HOME}/lofar
-export PATH=${LOFAR_INSTALL_DIR}/casacore/bin:$PATH
-export LD_LIBRARY_PATH=${LOFAR_INSTALL_DIR}/casacore/lib:${LD_LIBRARY_PATH}
+export PATH=${LOFAR_HOME}/casacore/bin:$PATH
+export LD_LIBRARY_PATH=${LOFAR_HOME}/casacore/lib:${LD_LIBRARY_PATH}
 
-## source HDF5
-export LD_LIBRARY_PATH=${LOFAR_INSTALL_DIR}/hdf5/lib:${LD_LIBRARY_PATH}
+## source missing libraries
+export LD_LIBRARY_PATH=${PROJECT}/lib:${LD_LIBRARY_PATH}

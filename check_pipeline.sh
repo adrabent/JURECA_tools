@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-. $PROJECT_chtb00/htb006/env_lofar_3.0_juwels.sh
+. $PROJECT_chtb00/htb006/env_lofar_3.2_juwels.sh
 
 file=$SCRATCH_chtb00/htb006/submit_job.sh
 while [ 1 ]

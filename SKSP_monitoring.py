@@ -32,12 +32,12 @@ from GRID_PiCaS_Launcher.couchdb.client import Server
 _version = '1.0'                               ## program version
 pref_version = '1.0'                           ## prefactor version for gathering solutions from the GRID
 nodes = 24                                     ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime = '01:30:00'                          ## walltime for the JUWELS queue
+walltime = '02:00:00'                          ## walltime for the JUWELS queue
 mail = 'alex@tls-tautenburg.de'                ## notification email address
 IONEX_server = 'ftp://ftp.aiub.unibe.ch/CODE/' ## URL for CODE downloads
 num_SBs_per_group_var = 10                     ## chunk size 
 max_dppp_threads_var = 24                      ## maximal threads per node per DPPP instance (max 96 on JUWELS)
-max_proc_per_node_limit_var = 4                ## maximal processes per node for DPPP
+max_proc_per_node_limit_var = 2                ## maximal processes per node for DPPP
 num_proc_per_node_var = 10                     ## maximal processes per node for others
 error_tolerance = 0                            ## number of failed tokens still acceptable for running pipelines
 condition = 'targ'                             ## condition for the pipeline in order to get checked for pre-existing data (usually the target pipeline)
@@ -460,6 +460,9 @@ def is_staged(url):
 		if 'ONLINE_AND_NEARLINE' in subprocess.check_output(['srmls', '-l', url]):
 			return True
 			pass
+		elif 'ONLINE' in subprocess.check_output(['srmls', '-l', url]):
+			logging.warning('The following file has no status NEARLINE: \033[35m' + url)
+			return True
 		else:
 			return False
 			pass
@@ -480,7 +483,6 @@ def transfer_data(token, filename, transfer_fn, to_pack):
 	if errorcode == 0:
 		subprocess.Popen(['uberftp','-rm', transfer_fn])
 		pass
-	transfer  = subprocess.Popen(['globus-url-copy', 'file:' + filename, transfer_fn], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	
 	if errorcode == 0:
@@ -681,7 +683,13 @@ def prepare_downloads(list_todos, pipeline_todownload, working_directory):
 def download_data(url, token_id, working_directory, observation, user, password, server, database):
 
 	filename   = working_directory + '/' + url.split('/')[-1]
-	download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
+	if '.psnc.pl' in url:
+		logging.warning('Using AES256-SHA as CIPHER')
+		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_CIPHERS' : 'AES256-SHA'})
+		pass
+	else:
+		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
+		pass
 	errorcode  = download.wait()
 	
 	client     = CouchDB(user, password, url = server, connect = True)
