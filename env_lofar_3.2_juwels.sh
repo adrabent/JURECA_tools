@@ -53,6 +53,7 @@ export LD_LIBRARY_PATH=${INSTALLDIR}/dysco/lib:${LD_LIBRARY_PATH}
 
 ## source DPPP
 export PATH=${INSTALLDIR}/DPPP/bin:${PATH}
+export LD_LIBRARY_PATH=${INSTALLDIR}/LOFARStMan/lib64:${LD_LIBRARY_PATH}
 
 ## source missing shared libraries
 export LD_LIBRARY_PATH=${INSTALLDIR}/../lib:${LD_LIBRARY_PATH}

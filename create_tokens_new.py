@@ -40,7 +40,7 @@ def my_handler(type, value, tb):
 		os.remove(lock)
 	time.sleep(300)
 
-def main(working_directory = None, server = 'localhost:3306', database = 'Juelich'):
+def main(working_directory = None, server = 'localhost:3306', database = 'Juelich', status = 'Observed'):
 
 	## load working environment
 	if not working_directory or not os.path.exists(working_directory):
@@ -50,19 +50,20 @@ def main(working_directory = None, server = 'localhost:3306', database = 'Juelic
 	field_name = field_id.split('_')[0]
 	obsid      = field_id.split('_')[1].lstrip('L')
 
-	update_status(field_name, obsid, 'Observed', 'observations')
+	update_status(field_name, obsid, status, 'observations')
 	field = get_one_observation(field_name, obsid)
 	print(field)
-	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: Observed.')
+	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: ' + status)
 
 
 if __name__=='__main__':
 	# Get command-line options.
 	parser = argparse.ArgumentParser(description='Reset failed field in LoTSS MySQL database')
 
-	parser.add_argument('workdir', type=str,     default = None,             help='Specify working directory to be reset.')
+	parser.add_argument('workdir', type=str,    default = None,             help='Specify working directory to be reset.')
 	parser.add_argument('--server', type=str,   default = 'localhost:3306', help='LoTSS MySQL server URL:port')
 	parser.add_argument('--database', type=str, default = None,             help='Define which database to use.')
+	parser.add_argument('--status', type=str,   default = 'Observed',       help='Define the status of the field.')
 
 	args = parser.parse_args()
 
@@ -79,6 +80,6 @@ if __name__=='__main__':
 	sys.excepthook = my_handler
 
 	# start running script
-	main(args.workdir, args.server, args.database)
+	main(args.workdir, args.server, args.database, args.status)
 
 	sys.exit(0)

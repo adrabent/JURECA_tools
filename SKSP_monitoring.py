@@ -483,6 +483,7 @@ def transfer_data(token, filename, transfer_fn, to_pack):
 	if errorcode == 0:
 		subprocess.Popen(['uberftp','-rm', transfer_fn])
 		pass
+	transfer  = subprocess.Popen(['globus-url-copy', 'file:' + filename, transfer_fn], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	
 	if errorcode == 0:
@@ -684,12 +685,15 @@ def download_data(url, token_id, working_directory, observation, user, password,
 
 	filename   = working_directory + '/' + url.split('/')[-1]
 	if '.psnc.pl' in url:
-		logging.warning('Using AES256-SHA as CIPHER')
-		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_CIPHERS' : 'AES256-SHA'})
+		logging.warning('Using wget for download!')
+		url = 'https://lta-download.lofar.psnc.pl/lofigrid/SRMFifoGet.py?surl=srm://lta-head.lofar.psnc.pl:8443/' + '/'.join(url.split('/')[3:])
+		#download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_CIPHERS' : 'AES256-SHA'})
+		download   = subprocess.Popen(['wget',  url, '-O' + filename], stdout=subprocess.PIPE)
 		pass
 	else:
 		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
 		pass
+	#download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
 	errorcode  = download.wait()
 	
 	client     = CouchDB(user, password, url = server, connect = True)
@@ -1396,13 +1400,11 @@ def main(server='https://picas-lofar.grid.surfsara.nl:6984', ftp='gsiftp://gridf
 	
 	## main pipeline loop
 	for pipeline in pipelines:
-		#print pipeline
 		tokens.add_view(TokenView(pipeline, 'doc.PIPELINE_STEP == "' + pipeline + '"'))                                          ## select all tokens of this pipeline
 		tokens.add_view(TokenView('temp',   'doc.PIPELINE_STEP == "' + pipeline + '" && (doc.output < 20 |  doc.output > 22)'))  ## select only tokens without download/upload error
 		tokens.add_view(TokenView('temp2',  'doc.PIPELINE_STEP == "' + pipeline + '" && (doc.output > 19 && doc.output < 23)'))  ## select only tokens with    download/upload error
 		list_pipeline_all      = tokens.list_view_tokens(pipeline)         ## get the pipeline list
 		list_pipeline          = tokens.list_view_tokens('temp')           ## get the pipeline list without download errors
-		#print list_pipeline
 		list_pipeline_download = tokens.list_view_tokens('temp2')          ## get the pipeline list with    download errors
 		list_observation       = tokens.list_view_tokens('overview_total') ## get the list of the entire observation
 		status = pipeline_status(list_pipeline_all)

@@ -55,25 +55,39 @@ def unlock_token(token):
 	print('Token \033[35m' + token['_id'] + '\033[32m has been unlocked.')
 	pass
 
-observation = 'pref3_targ_P126_02_L745146'
+observation = 'pref3_P245_68_LC13_019_L774571'
 home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 pc     = PicasCred(home_directory + '/.picasrc')
 client   = CouchDB(pc.user, pc.password, url = server, connect = True)
 db = client[pc.database]
 tokens = TokenList(database = db, token_type = observation)
 
-#tokens._design_doc.delete_view('overview_total')
 #tokens._design_doc.delete_view('pipeline_todo')
+#tokens._design_doc.delete_view('downloading')
+#tokens._design_doc.delete_view('unpacking')
+#tokens._design_doc.delete_view('unpacked')
+#tokens._design_doc.delete_view('submitted')
+#tokens._design_doc.delete_view('processing')
+#tokens._design_doc.delete_view('processed')
+#tokens._design_doc.delete_view('packing')
+#tokens._design_doc.delete_view('transferring')
+#tokens._design_doc.delete_view('transferred')
+#tokens._design_doc.delete_view('temp')
+#tokens._design_doc.delete_view('temp2')
+#tokens._design_doc.delete_view('overview_total')
 
-list_p = tokens.list_view_tokens('pref3_targ1')
+#list_p = tokens.list_view_tokens('pref3_targ1')
+#list_p = tokens.list_view_tokens('pref3_targ2')
 #list_p = tokens.list_view_tokens('pref3_cal')
 
 #for item in list_p:
     #item.delete()
     #undone_token(item)
     #set_token_status(item, 'processed')
-    
+
+list_p = tokens.list_view_tokens('pref3_cal')
 #list_p = tokens.list_view_tokens('pref3_targ1')
+#list_p = tokens.list_view_tokens('pref3_targ2')
 
 for item in list_p:
     #item.delete()
@@ -84,3 +98,4 @@ for item in list_p:
     #set_token_status(item, 'transferred')
     #set_token_status(item, 'submitted')
     set_token_status(item, 'queued')
+    #set_token_status(item, 'processed')

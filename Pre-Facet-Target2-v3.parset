@@ -145,6 +145,7 @@ pipeline.steps.phase        =  [gsmcal_phase, h5imp_gsmcal, prepare_losoto_phase
 pipeline.steps.tec          =  [gsmcal_tec,   h5imp_gsmcal, prepare_losoto_tec  ]
 
 pipeline.steps.finalize     =  [process_losoto_gsmcal, add_missing_stations, h5exp_gsm, apply_gsmcal, make_results_mapfile, make_results_compress, move_results, h5parm_name, structure_function, make_summary]
+# pipeline.steps.finalize     =  [process_losoto_gsmcal, add_missing_stations, h5exp_gsm, apply_gsmcal, make_results_mapfile, make_results_compress, move_results, h5parm_name, make_summary]
 
 
 #############################

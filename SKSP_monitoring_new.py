@@ -6,7 +6,7 @@ Surveys KSP monitoring script -- see https://github.com/adrabent/JURECA_tools
 """
 import optparse, logging
 import datetime, time
-import os, sys, shutil
+import os, sys, shutil, glob
 import subprocess, multiprocessing
 
 from surveys_utils import *
@@ -74,9 +74,9 @@ def is_running(lock_file):
 def is_staged(url):
 
 	try:
-		if 'ONLINE_AND_NEARLINE' in subprocess.check_output(['srmls', '-l', url]):
+		if 'ONLINE_AND_NEARLINE' in str(subprocess.check_output(['srmls', '-l', url])):
 			return True
-		elif 'ONLINE' in subprocess.check_output(['srmls', '-l', url]):
+		elif 'ONLINE' in str(subprocess.check_output(['srmls', '-l', url])):
 			logging.warning('The following file has no status NEARLINE: \033[35m' + url)
 			return True
 		else:
@@ -86,9 +86,9 @@ def is_staged(url):
 
 def gsi_replace(item):
 
-	item.replace('srm://srm.grid.sara.nl:8443', 'gsiftp://gridftp.grid.sara.nl:2811')
-	item.replace('srm://lofar-srm.fz-juelich.de:8443', 'gsiftp://lofar-gridftp.fz-juelich.de:2811')
-	item.replace('srm://lta-head.lofar.psnc.pl:8443', 'gsiftp://gridftp.lofar.psnc.pl:2811')
+	item = item.replace('srm://srm.grid.sara.nl:8443', 'gsiftp://gridftp.grid.sara.nl:2811')
+	item = item.replace('srm://lofar-srm.fz-juelich.de:8443', 'gsiftp://lofar-gridftp.fz-juelich.de:2811')
+	item = item.replace('srm://lta-head.lofar.psnc.pl:8443', 'gsiftp://gridftp.lofar.psnc.pl:2811')
 
 	return item
 
@@ -97,35 +97,29 @@ def check_submitted_job(slurm_log, submitted):
 	log_information = os.popen('tail -9 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'ERROR' in log_information:
 		logging.error(log_information)
-		os.remove(submitted)
 		return 'failed'
 	if 'error:' in log_information:
 		logging.error(log_information)
-		os.remove(submitted)
 		return 'failed'
 	if 'termination' in log_information:
 		logging.error(log_information)
-		os.remove(submitted)
 		return 'failed'
 	log_information = os.popen('tail -8 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'error:' in log_information:
 		logging.error(log_information)
-		os.remove(submitted)
 		return 'failed'
 	log_information = os.popen('tail -6 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'Error' in log_information:
 		logging.error(log_information)
-		os.remove(submitted)
 		return 'failed'
 	log_information = os.popen('tail -7 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'finished' in log_information:
 		logging.info(log_information)
-		os.remove(submitted)
 		return 'processed'
 
 	return 'processing'
 
-def submit_results(calibrator, field_name, obsid, working_directory):
+def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory):
 
 	parset            = working_directory + '/pipeline.parset'
 	results_directory = working_directory + '/pipeline/results'
@@ -134,37 +128,44 @@ def submit_results(calibrator, field_name, obsid, working_directory):
 	
 	logging.info('Results of the pipeline will be submitted.')
 	update_status(field_name, target_obsid, 'transferring', 'observations')
-	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: transferring')
+	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mtransferring')
 
 	# upload calibration results
 	if calibrator:
-		transfer_dir = ftp + '/' + cal_subdir + '/L' + cal_obsid
-		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
-		filename     = working_directory + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
+		transfer_dir = ftp + '/' + cal_subdir + '/Spider'
+		#subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
+		filename     = working_directory + '/' + cal_prefix + 'L' + obsid + '.tar'
 		transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
-		pack_and_transfer(filename, results_directory, results_directory + '/..', transfer_fn, field_name, obsid)
+		pack_and_transfer(filename, results_directory, results_directory + '/..', transfer_fn, field_name, target_obsid)
 	elif len(results) > 0:
-		transfer_dir = ftp + '/' + targ_subdir + '/L' + cal_obsid
+		transfer_dir = ftp + '/' + targ_subdir + '/L' + obsid
 		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
 		results.append(results_directory + '/inspection')
 		results.append(results_directory + '/cal_values')
+		pool = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
 		for result in results:
 			to_pack     = result
 			filename    = results_directory + '/' + topack + '.tar'
 			transfer_fn = transfer_dir + '/' + filename.split('/')[-1]
-			output = pool2.apply_async(pack_and_transfer, args = (filename, to_pack, to_pack + '/..', transfer_fn, field_name, obsid))
+			output = pool.apply_async(pack_and_transfer, args = (filename, to_pack, to_pack + '/..', transfer_fn, field_name, target_obsid))
+		pool.close()
+		pool.join()
 
 	### check status
 	field = get_one_observation(field_name, target_obsid)
 	if field['status'] == 'failed':
 		logging.warning('Submitting results was incomplete.')
-		return False
+		return True
 
 	logging.info('Submitting results has been finished.')
-	update_status(field_name, target_obsid, 'DI_processed', 'observations')
-	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: DI_processed')
+	if calibrator:
+		update_status(field_name, target_obsid, 'READY', 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mREADY')
+	else:
+		update_status(field_name, target_obsid, 'DI_Processed', 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mDI_Processed')
 
-	return True
+	return False
 
 def create_submission_script(submit_job, parset, working_directory, submitted):
 	
@@ -206,7 +207,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	os.rename(submit_job, submit_job + '.sh')
 	subprocess.Popen(['touch', submitted])
 
-def run_prefactor(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files):
+def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, slurm_files):
 
 	submit_job = working_directory + '/../submit_job'
 	parset     = working_directory + '/pipeline.parset'
@@ -221,7 +222,7 @@ def run_prefactor(calibrator, field_name, target_obsid, working_directory, submi
 	download = subprocess.Popen(['git', 'clone', '-b', branch, prefactor, working_directory + '/prefactor'], stdout=subprocess.PIPE)
 	errorcode = download.wait()
 	if errorcode != 0:
-		update_status(field_name, target_obsid, 'failed', 'observations')
+		update_status(field_name, obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 		logging.error('\033[31m Downloading prefactor has failed.')
 		return True
@@ -244,18 +245,18 @@ def run_prefactor(calibrator, field_name, target_obsid, working_directory, submi
 	max_dppp_threads        = os.popen('grep "! max_dppp_threads" '        + parset).readlines()[0].rstrip('\n').replace('/','\/')
 
 	if calibrator:
-		os.system('sed -i "s/' + input_path              + '/! cal_input_path          = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
-		os.system('sed -i "s/' + input_pattern           + '/! cal_input_pattern       = *.MS'                                                                               + '/g" ' + parset)
+		os.system('sed -i "s/' + input_path                      + '/! cal_input_path          = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
+		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! cal_input_pattern       = \*.MS'                                                                               + '/g" ' + parset)
 	else:
-		os.system('sed -i "s/' + input_path              + '/! target_input_path       = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
-		os.system('sed -i "s/' + input_pattern           + '/! target_input_pattern    = *.MS'                                                                               + '/g" ' + parset)
-		os.system('sed -i "s/' + cal_solutions           + '/! cal_solutions           = ' + working_directory.replace('/','\/') + '\/results\/cal_values\/cal_solutions.h5' + '/g" ' + parset)
-	os.system(    'sed -i "s/' + prefactor_directory     + '/! prefactor_directory     = ' + working_directory.replace('/','\/') + '\/prefactor'                             + '/g" ' + parset)
-	os.system(    'sed -i "s/' + losoto_directory        + '/! losoto_directory        = \$LOSOTO'                                                                           + '/g" ' + parset)
-	os.system(    'sed -i "s/' + aoflagger_executable    + '/! aoflagger               = \$AOFLAGGER'                                                                        + '/g" ' + parset)
-	os.system(    'sed -i "s/' + num_proc_per_node       + '/! num_proc_per_node       = ' + str(num_proc_per_node_var)                                                      + '/g" ' + parset)
-	os.system(    'sed -i "s/' + num_proc_per_node_limit + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var)                                                + '/g" ' + parset)
-	os.system(    'sed -i "s/' + max_dppp_threads        + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)                                                       + '/g" ' + parset)
+		os.system('sed -i "s/' + input_path                      + '/! target_input_path       = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
+		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! target_input_pattern    = \*.MS'                                                                               + '/g" ' + parset)
+		os.system('sed -i "s/' + cal_solutions                   + '/! cal_solutions           = ' + working_directory.replace('/','\/') + '\/results\/cal_values\/cal_solutions.h5' + '/g" ' + parset)
+	os.system(    'sed -i "s/' + prefactor_directory             + '/! prefactor_directory     = ' + working_directory.replace('/','\/') + '\/prefactor'                             + '/g" ' + parset)
+	os.system(    'sed -i "s/' + losoto_directory                + '/! losoto_directory        = \$LOSOTO'                                                                           + '/g" ' + parset)
+	os.system(    'sed -i "s/' + aoflagger_executable            + '/! aoflagger               = \$AOFLAGGER'                                                                        + '/g" ' + parset)
+	os.system(    'sed -i "s/' + num_proc_per_node               + '/! num_proc_per_node       = ' + str(num_proc_per_node_var)                                                      + '/g" ' + parset)
+	os.system(    'sed -i "s/' + num_proc_per_node_limit         + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var)                                                + '/g" ' + parset)
+	os.system(    'sed -i "s/' + max_dppp_threads                + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)                                                       + '/g" ' + parset)
 
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script(submit_job, parset, working_directory, submitted)
@@ -272,13 +273,13 @@ def run_prefactor(calibrator, field_name, target_obsid, working_directory, submi
 	while os.path.exists(submit_job + '.sh'):
 		time.sleep(5)
 	
-	update_status(field_name, target_obsid, 'submitted', 'observations')
-	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: submitted.')
-	logging.info('Pipeline \033[35m' + pipeline + '\033[32m has been submitted.')
-	
+	update_status(field_name, obsid, 'submitted', 'observations')
+	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35msubmitted.')
+	logging.info('Pipeline has been submitted.')
+
 	return False
 
-def unpack_data(filename, target_obsid, field_name, working_directory):
+def unpack_data(filename, obsid, field_name, working_directory):
   
 	os.chdir(working_directory)
 	unpack = subprocess.Popen(['tar', 'xfv', filename, '-C', working_directory], stdout=subprocess.PIPE)
@@ -288,7 +289,7 @@ def unpack_data(filename, target_obsid, field_name, working_directory):
 		logging.info('File \033[35m' + filename + '\033[32m was unpacked and removed.')
 	else:
 		logging.error('\033[31mUnpacking failed for: \033[35m' + str(filename))
-		update_status(field_name, target_obsid, 'failed', 'observations')
+		update_status(field_name, obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 
 def pack_and_transfer(filename, to_pack, pack_directory, transfer_fn, field_name, obsid):
@@ -304,10 +305,10 @@ def pack_and_transfer(filename, to_pack, pack_directory, transfer_fn, field_name
 		transfer_data(filename, transfer_fn, field_name, obsid)
 	else:
 		logging.error('\033[31mPacking of \033[35m' + filename + '\033[31m failed.')
-		update_status(field_name, obsid, 'failed', 'observations')
+		update_status(field_name, target_obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 
-def transfer_data(filename, transfer_fn, field_name, obsid):
+def transfer_data(filename, transfer_fn, field_name, target_obsid):
 
 	logging.info('\033[35m' + filename + '\033[32m is now transfered to: \033[35m' + transfer_fn)
 	existence = subprocess.Popen(['uberftp', '-ls', transfer_fn])
@@ -320,25 +321,26 @@ def transfer_data(filename, transfer_fn, field_name, obsid):
 		logging.info('File \033[35m' + filename + '\033[32m was transferred.')
 	else:
 		logging.error('\033[31mTransfer of \033[35m' + filename + '\033[31m failed.')
-		update_status(field_name, obsid, 'failed', 'observations')
+		update_status(field_name, target_obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 
-def download_data(url, target_obsid, field_name, working_directory):
+def download_data(url, obsid, field_name, working_directory):
 
 	filename   = working_directory + '/' + url.split('/')[-1]
 	if '.psnc.pl' in url:
 		logging.warning('Using wget for download!')
 		url = 'https://lta-download.lofar.psnc.pl/lofigrid/SRMFifoGet.py?surl=srm://lta-head.lofar.psnc.pl:8443/' + '/'.join(url.split('/')[3:])
+		logging.info('Downloading file: \033[35m' + filename)
 		download   = subprocess.Popen(['wget',  url, '-O' + filename], stdout=subprocess.PIPE)
 	else:
+		logging.info('Downloading file: \033[35m' + filename)
 		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
 	errorcode  = download.wait()
-
 	if errorcode == 0:
-		unpack_data(filename, target_obsid, field_name, working_directory)
+		unpack_data(filename, obsid, field_name, working_directory)
 	else:
 		logging.error('Download failed for: \033[35m' + str(url))
-		update_status(field_name, target_obsid, 'failed', 'observations')
+		update_status(field_name, obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 
 def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_directory):
@@ -464,7 +466,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	if not is_running(last_observation):
 		logging.info('Looking for a new observation.')
 		try:
-			nextfield    = get_next_pref(status = 'Observed', location = database)
+			nextfield    = get_next_pref(status = 'READY', location = database)
 		except TypeError:
 			try:
 				nextfield    = get_next_pref(status = 'not_staged', location = database)
@@ -494,6 +496,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### load observation from database and check for calibrator observation
 	field               = get_one_observation(field_name, target_obsid)
+	print(field)
 	cal_obsid           = str(field['calibrator_id'])
 	(calibrator, error) = get_calibrator(cal_obsid, field_name, target_obsid, ftp + '/' + cal_subdir, working_directory)
 	if calibrator:
@@ -518,7 +521,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
 			log_information = check_submitted_job(slurm_log, submitted).replace('\033[32m','').replace('\033[0m','')
 			if log_information == 'failed':
-				logging.error('Processing of pipeline has been failed. See error log for details.')
+				logging.error('Processing of pipeline has been failed. See errorlog for details.')
 				update_status(field_name, target_obsid, 'failed', 'observations')
 				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 				error = True
@@ -529,9 +532,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				return
 			else:
 				logging.info('Pipeline has finished successfully.')
-				update_status(field_name, target_obsid, 'processed', 'observations')
-				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to processed.')
-				error = submit_results(calibrator, field_name, obsid, ftp, working_directory)
+				error = submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory)
 				if error:
 					pass
 				else:
@@ -539,15 +540,16 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 					shutil.rmtree(working_directory, ignore_errors = True)
 					os.remove(last_observation)
 					return
+		return
 
 	### download data
 	download_list = prepare_downloads(obsid, field_name, target_obsid, ftp + '/' + srm_subdir, working_directory)
 	pool          = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
+	if not error and len(download_list) != 0:
+		update_status(field_name, target_obsid, 'downloading', 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mdownloading.')
 	for url in download_list:
-		if not error:
-			update_status(field_name, target_obsid, 'downloading', 'observations')
-			logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: downloading.')
-		result = pool.apply_async(download_data, args = (url, obsid, field_name, working_directory,))
+		result = pool.apply_async(download_data, args = (url, target_obsid, field_name, working_directory,))
 	pool.close()
 	pool.join()
 
@@ -560,7 +562,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### run prefactor
 	update_status(field_name, target_obsid, 'unpacked', 'observations')
-	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: unpacked.')
+	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35munpacked.')
 	logging.info('Prefactor pipeline will be started.')
 	run_prefactor(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
 
