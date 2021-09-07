@@ -40,20 +40,22 @@ def my_handler(type, value, tb):
 		os.remove(lock)
 	time.sleep(300)
 
-def main(working_directory = None, server = 'localhost:3306', database = 'Juelich', status = 'Observed'):
+def main(working_directory = None, server = 'localhost:3306', database = 'Juelich', status = None):
 
 	## load working environment
 	if not working_directory or not os.path.exists(working_directory):
-		logging.error('No working directory was specified or could be find')
+		logging.warning('No working directory was specified or could be find')
 
+	#os.remove(working_directory + '/.submitted')
 	field_id   = working_directory.rstrip('/').split('/')[-1]
 	field_name = field_id.split('_')[0]
 	obsid      = field_id.split('_')[1].lstrip('L')
 
-	update_status(field_name, obsid, status, 'observations')
+	if status:
+		update_status(field_name, obsid, status, 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: ' + status)
 	field = get_one_observation(field_name, obsid)
 	print(field)
-	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: ' + status)
 
 
 if __name__=='__main__':
@@ -63,7 +65,7 @@ if __name__=='__main__':
 	parser.add_argument('workdir', type=str,    default = None,             help='Specify working directory to be reset.')
 	parser.add_argument('--server', type=str,   default = 'localhost:3306', help='LoTSS MySQL server URL:port')
 	parser.add_argument('--database', type=str, default = None,             help='Define which database to use.')
-	parser.add_argument('--status', type=str,   default = 'Observed',       help='Define the status of the field.')
+	parser.add_argument('--status', type=str,   default = None,             help='Define the status of the field.')
 
 	args = parser.parse_args()
 

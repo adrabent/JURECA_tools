@@ -166,7 +166,8 @@ def skip_location(location='Juelich'):
 
 def get_next_at_location(status='Observed',location="Juelich"):
     sdb = SurveysDB(readonly=True, force_local_connection = True)
-    sdb.cur.execute('select observations.id,observations.field,fields.priority,observations.status,observations.priority,observations.location from observations left join fields on (observations.field=fields.id) where observations.status="%s" and observations.location = "%s" order by observations.priority desc ,fields.priority desc limit 2'%(status,location))
+    #sdb.cur.execute('select observations.id,observations.field,fields.priority,observations.status,observations.priority,observations.location from observations left join fields on (observations.field=fields.id) where observations.status="%s" and observations.location = "%s" order by observations.priority desc ,fields.priority desc limit 2'%(status,location))
+    sdb.cur.execute('select observations.id,observations.field,fields.priority,observations.status,observations.priority,observations.location from observations left join fields on (observations.field=fields.id) where observations.status="%s" order by observations.priority desc ,fields.priority desc limit 2'%(status))
     results = sdb.cur.fetchone()
     sdb.close()
     return results

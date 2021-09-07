@@ -22,7 +22,7 @@ cal_prefix                  = 'pref3_cal_'                                      
 prefactor                   = 'https://github.com/lofar-astron/prefactor.git'      ## location of prefactor
 branch                      = 'master'                                             ## branch to be used
 nodes                       = 24                                                   ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime                    = '02:00:00'                                           ## walltime for the JUWELS queue
+walltime                    = '03:00:00'                                           ## walltime for the JUWELS queue
 mail                        = 'alex@tls-tautenburg.de'                             ## notification email address
 IONEX_server                = 'ftp://ftp.aiub.unibe.ch/CODE/'                      ## URL for CODE downloads
 num_SBs_per_group_var       = 10                                                   ## chunk size 
@@ -123,8 +123,12 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 
 	parset            = working_directory + '/pipeline.parset'
 	results_directory = working_directory + '/pipeline/results'
+	logs_directory    = working_directory + '/pipeline/logs'
 	results           = sorted(glob.glob(results_directory + '/*.ms'))
-	shutil.copyfile(working_directory + '/pipeline.log', results_directory + '/pipeline.log')
+	
+	shutil.copyfile(working_directory + '/pipeline.log',  results_directory + '/inspection/pipeline.log')
+	shutil.copytree(working_directory + '/pipeline/logs', results_directory + '/logs', dirs_exist_ok = True)
+	shutil.copyfile(parset                             ,  results_directory + '/logs/pipeline.parset')
 	
 	logging.info('Results of the pipeline will be submitted.')
 	update_status(field_name, target_obsid, 'transferring', 'observations')
@@ -133,7 +137,6 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 	# upload calibration results
 	if calibrator:
 		transfer_dir = ftp + '/' + cal_subdir + '/Spider'
-		#subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
 		filename     = working_directory + '/' + cal_prefix + 'L' + obsid + '.tar'
 		transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
 		pack_and_transfer(filename, results_directory, results_directory + '/..', transfer_fn, field_name, target_obsid)
@@ -142,10 +145,11 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
 		results.append(results_directory + '/inspection')
 		results.append(results_directory + '/cal_values')
+		results.append(results_directory + '/logs')
 		pool = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
 		for result in results:
 			to_pack     = result
-			filename    = results_directory + '/' + topack + '.tar'
+			filename    = to_pack + '.tar'
 			transfer_fn = transfer_dir + '/' + filename.split('/')[-1]
 			output = pool.apply_async(pack_and_transfer, args = (filename, to_pack, to_pack + '/..', transfer_fn, field_name, target_obsid))
 		pool.close()
@@ -305,10 +309,10 @@ def pack_and_transfer(filename, to_pack, pack_directory, transfer_fn, field_name
 		transfer_data(filename, transfer_fn, field_name, obsid)
 	else:
 		logging.error('\033[31mPacking of \033[35m' + filename + '\033[31m failed.')
-		update_status(field_name, target_obsid, 'failed', 'observations')
+		update_status(field_name, obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 
-def transfer_data(filename, transfer_fn, field_name, target_obsid):
+def transfer_data(filename, transfer_fn, field_name, obsid):
 
 	logging.info('\033[35m' + filename + '\033[32m is now transfered to: \033[35m' + transfer_fn)
 	existence = subprocess.Popen(['uberftp', '-ls', transfer_fn])
@@ -321,7 +325,7 @@ def transfer_data(filename, transfer_fn, field_name, target_obsid):
 		logging.info('File \033[35m' + filename + '\033[32m was transferred.')
 	else:
 		logging.error('\033[31mTransfer of \033[35m' + filename + '\033[31m failed.')
-		update_status(field_name, target_obsid, 'failed', 'observations')
+		update_status(field_name, obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 
 def download_data(url, obsid, field_name, working_directory):
@@ -396,23 +400,26 @@ def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_director
 
 	return download_list
 
-def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working_directory):
+def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working_directory, submitted):
 
 	logging.info('Checking calibrator observation: \033[35mL' + cal_obsid)
 	cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
 	existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
 	errorcode = existence.wait()
 	if errorcode == 0:
-		logging.info('Transferring calibrator results for this field from: \033[35m' + cal_solution)
+		logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 	else:
 		cal_solution = cal_results_dir + '/Spider/' + cal_prefix + 'L' + cal_obsid + '.tar'
 		existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
 		errorcode = existence.wait()
 		if errorcode == 0:
-			logging.info('Transferring calibrator results for this field from: \033[35m' + cal_solution)
+			logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 		else:
 			logging.warning('Could not find any calibrator results for this field in: \033[35m' + cal_solution)
 			return (True, False)
+
+	if os.path.isfile(submitted):
+		return (False, False)
 
 	filename = working_directory + '/' + os.path.basename(cal_solution)
 	transfer  = subprocess.Popen(['globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
@@ -444,7 +451,6 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	working_directory = os.environ['SCRATCH_chtb00'] + '/htb006'
 	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	server_config     = os.environ['HOME']           + '/.surveys'
-	#done              = working_directory + '/.done'
 	last_observation  = working_directory + '/.observation'
 	slurm_files       = home_directory    + '/slurm-*.out'
 	logging.info('\033[0mWorking directory is ' + working_directory)
@@ -463,7 +469,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 		target_obsid = observation.split('_')[-1].lstrip('L')
 
 	### check for new observations if necessary
-	if not is_running(last_observation):
+	while not is_running(last_observation) and observation == 1:
 		logging.info('Looking for a new observation.')
 		try:
 			nextfield    = get_next_pref(status = 'READY', location = database)
@@ -472,15 +478,21 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				nextfield    = get_next_pref(status = 'not_staged', location = database)
 			except TypeError:
 				logging.info('\033[0mNo tokens in database found to be processed.')
-				return
+				logging.info('Checking for observations in the working directory to be resumed.')
+				working_directories = [ f.path for f in os.scandir(working_directory) if f.is_dir() ]
+				for working_directory in working_directories:
+					field_id   = working_directory.rstrip('/').split('/')[-1]
+					field_name = field_id.split('_')[0]
+					obsid      = field_id.split('_')[1].lstrip('L')
+					update_status(field_name, obsid, 'READY', 'observations')
+					logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: READY')
+				if working_directories == []:
+					logging.info('\033[0mNo observations could be found. If database is not empty please check it for new or false tokens manually.')
+					time.sleep(300)
+				continue
 		target_obsid = str(nextfield['target_OBSID'])
 		field_name   = nextfield['field_name']
 		observation  = field_name + '_L' + target_obsid
-
-	if observation == 1:
-		logging.info('\033[0mNo observations could be found. If database is not empty please check it for new or false tokens manually.')
-		time.sleep(300)
-		return
 
 	### reserve following processes
 	logging.info('Selected target field observation: \033[35m' + observation)
@@ -490,15 +502,16 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	
 	### create subdirectory
 	working_directory += '/' + observation ## for subdirectories
+	submitted          = working_directory + '/.submitted'
 	if not os.path.exists(working_directory):
 		logging.info('Creating working directory: \033[35m' + working_directory)
 		os.makedirs(working_directory)
 
 	### load observation from database and check for calibrator observation
 	field               = get_one_observation(field_name, target_obsid)
-	print(field)
+	#print(field)
 	cal_obsid           = str(field['calibrator_id'])
-	(calibrator, error) = get_calibrator(cal_obsid, field_name, target_obsid, ftp + '/' + cal_subdir, working_directory)
+	(calibrator, error) = get_calibrator(cal_obsid, field_name, target_obsid, ftp + '/' + cal_subdir, working_directory, submitted)
 	if calibrator:
 		working_directory += '_L' + cal_obsid
 		obsid = cal_obsid
@@ -512,10 +525,10 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### check whether a job has been already submitted
 	submitted = working_directory + '/.submitted'
-	if is_running(submitted): 
+	while is_running(submitted): 
 		logging.info('\033[0mA pipeline has already been submitted.')
 		slurm_list = glob.glob(slurm_files)
-		if len(slurm_list) > 0:
+		while len(slurm_list) > 0 and error == False:
 			slurm_log = slurm_list[-1]
 			job_id = os.path.basename(slurm_log).lstrip('slurm-').rstrip('.out')
 			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
@@ -525,22 +538,21 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				update_status(field_name, target_obsid, 'failed', 'observations')
 				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 				error = True
+				os.remove(submitted)
 			elif log_information == 'processing':
 				logging.info('Pipeline is currently processing.')
 				update_status(field_name, target_obsid, 'processing', 'observations')
-				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to processing.')
-				return
+				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mprocessing.')
+				time.sleep(60)
 			else:
 				logging.info('Pipeline has finished successfully.')
 				error = submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory)
-				if error:
-					pass
-				else:
+				if not error:
 					logging.info('Cleaning working directory.')
 					shutil.rmtree(working_directory, ignore_errors = True)
 					os.remove(last_observation)
 					return
-		return
+		time.sleep(60)
 
 	### download data
 	download_list = prepare_downloads(obsid, field_name, target_obsid, ftp + '/' + srm_subdir, working_directory)
@@ -557,7 +569,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	field = get_one_observation(field_name, target_obsid)
 	if field['status'] == 'failed' or field['status'] == 'not_staged':
 		logging.error('Could not proceed with selected field. Please check database or logfiles for any errors.')
-		#os.remove(last_observation)
+		os.remove(last_observation)
 		return
 
 	### run prefactor
@@ -565,6 +577,8 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35munpacked.')
 	logging.info('Prefactor pipeline will be started.')
 	run_prefactor(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
+
+	return
 
 
 if __name__=='__main__':
