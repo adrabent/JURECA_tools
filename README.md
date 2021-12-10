@@ -14,7 +14,7 @@ Installation is done via the following scripts
 
     git clone https://github.com/adrabent/JURECA_tools.git
     ./lofar_install_juwels.sh
-    ./survey_install_juwels.sh
+    ./surveys_install_juwels.sh
 
 The script `SKSP_monitoring.py` is the master script and looks for new tokens, manages the jobs and updates tokens.
 It is called on `JUDAC` via (in a 1 minute interval)
