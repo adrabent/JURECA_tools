@@ -2,7 +2,7 @@
 
 . $PROJECT_chtb00/htb006/env_lofar_GRID_stage2020.sh
 
-file=$PROJECT/SKSP_monitoring_new.py
+file=$PROJECT/SKSP_monitoring.py
 proxy=$PROJECT/launch_proxy.sh
 
 $proxy
