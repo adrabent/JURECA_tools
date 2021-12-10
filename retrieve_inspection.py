@@ -47,13 +47,13 @@ def get_calibrator(cal_obsid, field_name, cal_results_dir, working_directory):
 
 	logging.info('Checking calibrator observation: \033[35mL' + cal_obsid)
 	cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
-	existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 	else:
 		cal_solution = cal_results_dir + '/Spider/' + cal_prefix + 'L' + cal_obsid + '.tar'
-		existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+		existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 		errorcode = existence.wait()
 		if errorcode == 0:
 			logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
@@ -85,13 +85,13 @@ def get_calibrator(cal_obsid, cal_results_dir, working_directory):
 
 	logging.info('Checking calibrator observation: \033[35mL' + cal_obsid)
 	cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
-	existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 	else:
 		cal_solution = cal_results_dir + '/Spider/' + cal_prefix + 'L' + cal_obsid + '.tar'
-		existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+		existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 		errorcode = existence.wait()
 		if errorcode == 0:
 			logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
@@ -123,7 +123,7 @@ def get_target(targ_obsid, cal_results_dir, working_directory):
 
 	logging.info('Checking target observation: \033[35mL' + targ_obsid)
 	cal_solution = cal_results_dir + '/L' + targ_obsid + '/inspection.tar'
-	existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Found target results for this field from: \033[35m' + cal_solution)

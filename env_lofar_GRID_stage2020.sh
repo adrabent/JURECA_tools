@@ -14,3 +14,6 @@ export LD_LIBRARY_PATH=${LOFAR_HOME}/casacore/lib:${LD_LIBRARY_PATH}
 
 ## source missing libraries
 export LD_LIBRARY_PATH=${PROJECT}/lib:${LD_LIBRARY_PATH}
+
+## options for globus
+export GLOBUS_GSSAPI_MAX_TLS_PROTOCOL=TLS1_2_VERSION 

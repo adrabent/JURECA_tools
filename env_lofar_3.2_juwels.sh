@@ -12,7 +12,6 @@ export AOFLAGGER=${INSTALLDIR}/aoflagger/bin/aoflagger
 module use /gpfs/software/juwels/otherstages
 module load Stages/${STAGE}
 
-
 module load GCC/8.2.0  ParaStationMPI/5.2.1-1
 
 module load HDF5

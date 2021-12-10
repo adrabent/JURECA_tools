@@ -22,7 +22,7 @@ cal_prefix                  = 'pref3_cal_'                                      
 prefactor                   = 'https://github.com/lofar-astron/prefactor.git'      ## location of prefactor
 branch                      = 'master'                                             ## branch to be used
 nodes                       = 24                                                   ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime                    = '03:00:00'                                           ## walltime for the JUWELS queue
+walltime                    = '02:30:00'                                           ## walltime for the JUWELS queue
 mail                        = 'alex@tls-tautenburg.de'                             ## notification email address
 IONEX_server                = 'ftp://ftp.aiub.unibe.ch/CODE/'                      ## URL for CODE downloads
 num_SBs_per_group_var       = 10                                                   ## chunk size 
@@ -73,8 +73,10 @@ def is_running(lock_file):
 
 def is_staged(url):
 
+	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
+
 	try:
-		if 'ONLINE_AND_NEARLINE' in str(subprocess.check_output(['srmls', '-l', url])):
+		if 'ONLINE_AND_NEARLINE' in str(subprocess.check_output(['singularity', 'exec', home_directory + '/lta-client.sif', 'srmls', '-l', url], )):
 			return True
 		elif 'ONLINE' in str(subprocess.check_output(['srmls', '-l', url])):
 			logging.warning('The following file has no status NEARLINE: \033[35m' + url)
@@ -112,11 +114,30 @@ def check_submitted_job(slurm_log, submitted):
 	if 'Error' in log_information:
 		logging.error(log_information)
 		return 'failed'
+	log_information = os.popen('tail -18 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'ERROR' in log_information:
+		logging.error(log_information)
+		return 'failed'
+	log_information = os.popen('tail -2 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'finished' in log_information:
+		logging.info(log_information)
+		return 'processed'
 	log_information = os.popen('tail -7 ' + slurm_log).readlines()[0].rstrip('\n')
 	if 'finished' in log_information:
 		logging.info(log_information)
 		return 'processed'
-
+	log_information = os.popen('tail -12 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'finished' in log_information:
+		logging.info(log_information)
+		return 'processed'
+	log_information = os.popen('tail -16 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'finished' in log_information:
+		logging.info(log_information)
+		return 'processed'
+	log_information = os.popen('tail -18 ' + slurm_log).readlines()[0].rstrip('\n')
+	if 'finished' in log_information:
+		logging.info(log_information)
+		return 'processed'
 	return 'processing'
 
 def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory):
@@ -124,11 +145,14 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 	parset            = working_directory + '/pipeline.parset'
 	results_directory = working_directory + '/pipeline/results'
 	logs_directory    = working_directory + '/pipeline/logs'
+	skymodel          = working_directory + '/pipeline/target.skymodel'
 	results           = sorted(glob.glob(results_directory + '/*.ms'))
 	
-	shutil.copyfile(working_directory + '/pipeline.log',  results_directory + '/inspection/pipeline.log')
-	shutil.copytree(working_directory + '/pipeline/logs', results_directory + '/logs', dirs_exist_ok = True)
-	shutil.copyfile(parset                             ,  results_directory + '/logs/pipeline.parset')
+	shutil.copyfile(working_directory + '/pipeline.log' , results_directory + '/inspection/pipeline.log')
+	shutil.copytree(logs_directory                      , results_directory + '/logs', dirs_exist_ok = True)
+	shutil.copyfile(parset                              , results_directory + '/logs/pipeline.parset')
+	if os.path.isfile(skymodel):
+		shutil.copyfile(skymodel                        , results_directory + '/inspection/pipeline.skymodel')
 	
 	logging.info('Results of the pipeline will be submitted.')
 	update_status(field_name, target_obsid, 'transferring', 'observations')
@@ -142,7 +166,7 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 		pack_and_transfer(filename, results_directory, results_directory + '/..', transfer_fn, field_name, target_obsid)
 	elif len(results) > 0:
 		transfer_dir = ftp + '/' + targ_subdir + '/L' + obsid
-		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE)
+		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 		results.append(results_directory + '/inspection')
 		results.append(results_directory + '/cal_values')
 		results.append(results_directory + '/logs')
@@ -163,7 +187,7 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 
 	logging.info('Submitting results has been finished.')
 	if calibrator:
-		update_status(field_name, target_obsid, 'READY', 'observations')
+		update_status(field_name, target_obsid, 'READY', 'observations') ## NEEDS TO BE CHANGED SOMEWHEN
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mREADY')
 	else:
 		update_status(field_name, target_obsid, 'DI_Processed', 'observations')
@@ -189,7 +213,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		IONEX_script         = os.popen('find ' + working_directory  +                  ' -name createRMh5parm.py ').readlines()[0].rstrip('\n').replace(' ','')
 		target_input_pattern = os.popen('grep target_input_pattern ' + parset + ' | cut -f2- -d"=" | cut -f1 -d"#"').readlines()[0].rstrip('\n').replace(' ','')
 		cal_solutions        = os.popen('grep cal_solutions '        + parset + ' | cut -f2- -d"=" | cut -f1 -d"#"').readlines()[0].rstrip('\n').replace(' ','')
-		jobfile.write(IONEX_script + ' --ionexpath ' + working_directory + '/pipeline/. --server ' + IONEX_server + ' --solsetName target ' + working_directory + '/' + target_input_pattern + ' ' + cal_solutions + '\n')
+		jobfile.write('python2.7 ' + IONEX_script + ' --ionexpath ' + working_directory + '/pipeline/. --server ' + IONEX_server + ' --solsetName target ' + working_directory + '/' + target_input_pattern + ' ' + cal_solutions + '\n')
 	except IndexError:
 		pass
 	try:
@@ -198,7 +222,7 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 		target_skymodel      = working_directory + '/pipeline/target.skymodel'
 		if os.path.exists(target_skymodel):
 			os.remove(target_skymodel)
-		jobfile.write(skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
+		jobfile.write('python2.7 ' + skymodel_script + ' ' + working_directory + '/' + target_input_pattern + ' ' + target_skymodel + '\n')
 	except IndexError:
 		pass
 	
@@ -215,7 +239,7 @@ def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, s
 
 	submit_job = working_directory + '/../submit_job'
 	parset     = working_directory + '/pipeline.parset'
-
+	
 	## downloading prefactor
 	filename = working_directory + '/prefactor.tar'
 	logging.info('Downloading current prefactor version from \033[35m' + prefactor + '\033[32m to \033[35m' + working_directory + '/prefactor')
@@ -230,37 +254,56 @@ def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, s
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 		logging.error('\033[31m Downloading prefactor has failed.')
 		return True
+	os.chdir(working_directory + '/prefactor')
+	commit = os.popen('git show | grep commit | cut -f2- -d" "').readlines()[0].strip()
 
 	## applying necessary changes to the parset
 	if calibrator:
 		shutil.copyfile(working_directory + '/prefactor/Pre-Facet-Calibrator.parset', parset)
-		input_path          = os.popen('grep "! cal_input_path" '          + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		input_pattern       = os.popen('grep "! cal_input_pattern" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		input_path                = os.popen('grep "! cal_input_path" '             + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		input_pattern             = os.popen('grep "! cal_input_pattern" '          + parset).readlines()[0].rstrip('\n').replace('/','\/')
 	else:
 		shutil.copyfile(working_directory + '/prefactor/Pre-Facet-Target.parset'    , parset)
-		input_path          = os.popen('grep "! target_input_path" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		input_pattern       = os.popen('grep "! target_input_pattern" '    + parset).readlines()[0].rstrip('\n').replace('/','\/')
-		cal_solutions       = os.popen('grep "! cal_solutions" '           + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	prefactor_directory     = os.popen('grep "! prefactor_directory" '     + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	losoto_directory        = os.popen('grep "! losoto_directory" '        + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	aoflagger_executable    = os.popen('grep "! aoflagger" '               + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	num_proc_per_node       = os.popen('grep "! num_proc_per_node" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	num_proc_per_node_limit = os.popen('grep "! num_proc_per_node_limit" ' + parset).readlines()[0].rstrip('\n').replace('/','\/')
-	max_dppp_threads        = os.popen('grep "! max_dppp_threads" '        + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		input_path                = os.popen('grep "! target_input_path" '          + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		input_pattern             = os.popen('grep "! target_input_pattern" '       + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		cal_solutions             = os.popen('grep "! cal_solutions" '              + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		min_unflagged_fraction    = os.popen('grep "! min_unflagged_fraction" '     + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		avg_timeresolution        = os.popen('grep "! avg_timeresolution" '         + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		avg_freqresolution        = os.popen('grep "! avg_freqresolution" '         + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		avg_timeresolution_concat = os.popen('grep "! avg_timeresolution_concat" '  + parset).readlines()[0].rstrip('\n').replace('/','\/')
+		avg_freqresolution_concat = os.popen('grep "! avg_freqresolution_concat" '  + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	prefactor_directory           = os.popen('grep "! prefactor_directory" '        + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	losoto_directory              = os.popen('grep "! losoto_directory" '           + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	aoflagger_executable          = os.popen('grep "! aoflagger" '                  + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	num_proc_per_node             = os.popen('grep "! num_proc_per_node" '          + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	num_proc_per_node_limit       = os.popen('grep "! num_proc_per_node_limit" '    + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	max_dppp_threads              = os.popen('grep "! max_dppp_threads" '           + parset).readlines()[0].rstrip('\n').replace('/','\/')
+	
 
 	if calibrator:
-		os.system('sed -i "s/' + input_path                      + '/! cal_input_path          = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
-		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! cal_input_pattern       = \*.MS'                                                                               + '/g" ' + parset)
+		os.system('sed -i "s/' + input_path                      + '/! cal_input_path            = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
+		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! cal_input_pattern         = \*.MS'                                                                              + '/g" ' + parset)
 	else:
-		os.system('sed -i "s/' + input_path                      + '/! target_input_path       = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
-		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! target_input_pattern    = \*.MS'                                                                               + '/g" ' + parset)
-		os.system('sed -i "s/' + cal_solutions                   + '/! cal_solutions           = ' + working_directory.replace('/','\/') + '\/results\/cal_values\/cal_solutions.h5' + '/g" ' + parset)
-	os.system(    'sed -i "s/' + prefactor_directory             + '/! prefactor_directory     = ' + working_directory.replace('/','\/') + '\/prefactor'                             + '/g" ' + parset)
-	os.system(    'sed -i "s/' + losoto_directory                + '/! losoto_directory        = \$LOSOTO'                                                                           + '/g" ' + parset)
-	os.system(    'sed -i "s/' + aoflagger_executable            + '/! aoflagger               = \$AOFLAGGER'                                                                        + '/g" ' + parset)
-	os.system(    'sed -i "s/' + num_proc_per_node               + '/! num_proc_per_node       = ' + str(num_proc_per_node_var)                                                      + '/g" ' + parset)
-	os.system(    'sed -i "s/' + num_proc_per_node_limit         + '/! num_proc_per_node_limit = ' + str(max_proc_per_node_limit_var)                                                + '/g" ' + parset)
-	os.system(    'sed -i "s/' + max_dppp_threads                + '/! max_dppp_threads        = ' + str(max_dppp_threads_var)                                                       + '/g" ' + parset)
+		os.system('sed -i "s/' + input_path                      + '/! target_input_path         = ' + working_directory.replace('/','\/')                                             + '/g" ' + parset)
+		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! target_input_pattern      = \*.MS'                                                                              + '/g" ' + parset)
+		os.system('sed -i "s/' + cal_solutions                   + '/! cal_solutions             = ' + working_directory.replace('/','\/') + '\/results\/cal_values\/cal_solutions.h5' + '/g" ' + parset)
+		os.system('sed -i "s/' + min_unflagged_fraction          + '/! min_unflagged_fraction    = 0.05'                                                                               + '/g" ' + parset)
+		os.system('sed -i "s/' + avg_timeresolution              + '/! avg_timeresolution        = 4.'                                                                                 + '/g" ' + parset)
+		os.system('sed -i "s/' + avg_freqresolution              + '/! avg_freqresolution        = 48.82kHz'                                                                           + '/g" ' + parset)
+		os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 8.'                                                                                 + '/g" ' + parset)
+		os.system('sed -i "s/' + avg_freqresolution_concat       + '/! avg_freqresolution_concat = 97.64kHz'                                                                           + '/g" ' + parset)
+		#os.system('sed -i "s/' + avg_timeresolution              + '/! avg_timeresolution        = 1.'                                                                                 + '/g" ' + parset)
+		#os.system('sed -i "s/' + avg_freqresolution              + '/! avg_freqresolution        = 12.205kHz'                                                                           + '/g" ' + parset)
+		#os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 1.'                                                                                 + '/g" ' + parset)
+		#os.system('sed -i "s/' + avg_freqresolution_concat       + '/! avg_freqresolution_concat = 12.205kHz'                                                                           + '/g" ' + parset)
+
+	os.system(    'sed -i "s/' + prefactor_directory             + '/! prefactor_directory       = ' + working_directory.replace('/','\/') + '\/prefactor'                             + '/g" ' + parset)
+	os.system(    'sed -i "s/' + losoto_directory                + '/! losoto_directory          = \$LOSOTO'                                                                           + '/g" ' + parset)
+	os.system(    'sed -i "s/' + aoflagger_executable            + '/! aoflagger                 = \$AOFLAGGER'                                                                        + '/g" ' + parset)
+	os.system(    'sed -i "s/' + num_proc_per_node               + '/! num_proc_per_node         = ' + str(num_proc_per_node_var)                                                      + '/g" ' + parset)
+	os.system(    'sed -i "s/' + num_proc_per_node_limit         + '/! num_proc_per_node_limit   = ' + str(max_proc_per_node_limit_var)                                                + '/g" ' + parset)
+	os.system(    'sed -i "s/' + max_dppp_threads                + '/! max_dppp_threads          = ' + str(max_dppp_threads_var)                                                       + '/g" ' + parset)
+	os.system(    'sed -i "1 i\#####GIT COMMIT '                                                     + commit                                                                          + '"   ' + parset)
 
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script(submit_job, parset, working_directory, submitted)
@@ -315,11 +358,11 @@ def pack_and_transfer(filename, to_pack, pack_directory, transfer_fn, field_name
 def transfer_data(filename, transfer_fn, field_name, obsid):
 
 	logging.info('\033[35m' + filename + '\033[32m is now transfered to: \033[35m' + transfer_fn)
-	existence = subprocess.Popen(['uberftp', '-ls', transfer_fn])
+	existence = subprocess.Popen(['uberftp', '-ls', transfer_fn], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
-		subprocess.Popen(['uberftp','-rm', transfer_fn])
-	transfer  = subprocess.Popen(['globus-url-copy', 'file:' + filename, transfer_fn], stdout=subprocess.PIPE)
+		subprocess.Popen(['uberftp','-rm', transfer_fn], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
+	transfer  = subprocess.Popen(['globus-url-copy', 'file:' + filename, transfer_fn], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = transfer.wait()
 	if errorcode == 0:
 		logging.info('File \033[35m' + filename + '\033[32m was transferred.')
@@ -338,20 +381,20 @@ def download_data(url, obsid, field_name, working_directory):
 		download   = subprocess.Popen(['wget',  url, '-O' + filename], stdout=subprocess.PIPE)
 	else:
 		logging.info('Downloading file: \033[35m' + filename)
-		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE)
+		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode  = download.wait()
 	if errorcode == 0:
 		unpack_data(filename, obsid, field_name, working_directory)
 	else:
 		logging.error('Download failed for: \033[35m' + str(url))
-		update_status(field_name, obsid, 'failed', 'observations')
-		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
+		update_status(field_name, obsid, 'not_staged', 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[33mnot_staged.')
 
-def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_directory):
+def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_directory, error):
 
 	logging.info('Retrieving SRM file for: \033[35mL' + obsid)
 	srm_file = srm_dir + '/srm' + obsid + '.txt'
-	existence = subprocess.Popen(['uberftp', '-ls', srm_file])
+	existence = subprocess.Popen(['uberftp', '-ls', srm_file], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Transferring SRM file from: \033[35m' + srm_file)
@@ -362,7 +405,7 @@ def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_director
 		return []
 
 	filename = working_directory + '/' + os.path.basename(srm_file)
-	transfer  = subprocess.Popen(['globus-url-copy', srm_file, 'file://' + filename], stdout=subprocess.PIPE)
+	transfer  = subprocess.Popen(['globus-url-copy', srm_file, 'file://' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = transfer.wait()
 	if errorcode != 0:
 		logging.error('\033[31mDownloading SRM file has failed.')
@@ -397,20 +440,21 @@ def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_director
 	if not staged:
 		update_status(field_name, target_obsid, 'not_staged', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[33mnot_staged.')
+		error = True
 
-	return download_list
+	return (download_list, error)
 
 def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working_directory, submitted):
 
 	logging.info('Checking calibrator observation: \033[35mL' + cal_obsid)
 	cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
-	existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 	else:
 		cal_solution = cal_results_dir + '/Spider/' + cal_prefix + 'L' + cal_obsid + '.tar'
-		existence = subprocess.Popen(['uberftp', '-ls', cal_solution])
+		existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 		errorcode = existence.wait()
 		if errorcode == 0:
 			logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
@@ -422,7 +466,7 @@ def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working
 		return (False, False)
 
 	filename = working_directory + '/' + os.path.basename(cal_solution)
-	transfer  = subprocess.Popen(['globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
+	transfer  = subprocess.Popen(['globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = transfer.wait()
 	if errorcode != 0:
 		logging.error('\033[31mDownloading calibrator results has failed.')
@@ -472,20 +516,23 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	while not is_running(last_observation) and observation == 1:
 		logging.info('Looking for a new observation.')
 		try:
-			nextfield    = get_next_pref(status = 'READY', location = database)
+			nextfield = get_next_pref(status = 'READY', location = database)
 		except TypeError:
 			try:
-				nextfield    = get_next_pref(status = 'not_staged', location = database)
+				nextfield = get_next_pref(status = 'not_staged', location = database)
 			except TypeError:
 				logging.info('\033[0mNo tokens in database found to be processed.')
 				logging.info('Checking for observations in the working directory to be resumed.')
 				working_directories = [ f.path for f in os.scandir(working_directory) if f.is_dir() ]
 				for working_directory in working_directories:
 					field_id   = working_directory.rstrip('/').split('/')[-1]
-					field_name = field_id.split('_')[0]
-					obsid      = field_id.split('_')[1].lstrip('L')
-					update_status(field_name, obsid, 'READY', 'observations')
-					logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: READY')
+					try:
+						field_name = field_id.split('_')[0]
+						obsid      = field_id.split('_')[1].lstrip('L')
+						update_status(field_name, obsid, 'READY', 'observations')
+						logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: READY')
+					except (IndexError, TypeError):
+						continue
 				if working_directories == []:
 					logging.info('\033[0mNo observations could be found. If database is not empty please check it for new or false tokens manually.')
 					time.sleep(300)
@@ -501,7 +548,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	observation_file.close()
 	
 	### create subdirectory
-	working_directory += '/' + observation ## for subdirectories
+	working_directory  = os.environ['SCRATCH_chtb00'] + '/htb006/' + observation ## for subdirectories
 	submitted          = working_directory + '/.submitted'
 	if not os.path.exists(working_directory):
 		logging.info('Creating working directory: \033[35m' + working_directory)
@@ -509,7 +556,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### load observation from database and check for calibrator observation
 	field               = get_one_observation(field_name, target_obsid)
-	#print(field)
+	print(field)
 	cal_obsid           = str(field['calibrator_id'])
 	(calibrator, error) = get_calibrator(cal_obsid, field_name, target_obsid, ftp + '/' + cal_subdir, working_directory, submitted)
 	if calibrator:
@@ -550,13 +597,13 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				if not error:
 					logging.info('Cleaning working directory.')
 					shutil.rmtree(working_directory, ignore_errors = True)
-					os.remove(last_observation)
-					return
+				os.remove(last_observation)
+				return
 		time.sleep(60)
 
 	### download data
-	download_list = prepare_downloads(obsid, field_name, target_obsid, ftp + '/' + srm_subdir, working_directory)
-	pool          = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
+	(download_list, error) = prepare_downloads(obsid, field_name, target_obsid, ftp + '/' + srm_subdir, working_directory, error)
+	pool                   = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
 	if not error and len(download_list) != 0:
 		update_status(field_name, target_obsid, 'downloading', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mdownloading.')
@@ -567,7 +614,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### lock program
 	field = get_one_observation(field_name, target_obsid)
-	if field['status'] == 'failed' or field['status'] == 'not_staged':
+	if field['status'] == 'failed' or field['status'] == 'not_staged' or error:
 		logging.error('Could not proceed with selected field. Please check database or logfiles for any errors.')
 		os.remove(last_observation)
 		return

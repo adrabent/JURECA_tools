@@ -34,7 +34,7 @@ def add_coloring_to_emit_ansi(fn):
 	return new
 
 def my_handler(type, value, tb):
-	exception = logger.critical("{0}".format(str(value)))
+	exception = logging.critical("{0}".format(str(value)))
 	lock = os.environ['SCRATCH_chtb00'] + '/htb006' '/.lock'
 	if os.path.exists(lock):
 		os.remove(lock)
@@ -44,7 +44,7 @@ def main(working_directory = None, server = 'localhost:3306', database = 'Juelic
 
 	## load working environment
 	if not working_directory or not os.path.exists(working_directory):
-		logging.warning('No working directory was specified or could be find')
+		logging.warning('No working directory was specified or could be found')
 
 	#os.remove(working_directory + '/.submitted')
 	field_id   = working_directory.rstrip('/').split('/')[-1]
@@ -55,8 +55,6 @@ def main(working_directory = None, server = 'localhost:3306', database = 'Juelic
 		update_status(field_name, obsid, status, 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: ' + status)
 	field = get_one_observation(field_name, obsid)
-	print(field)
-
 
 if __name__=='__main__':
 	# Get command-line options.

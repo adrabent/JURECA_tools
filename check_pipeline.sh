@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 
+module use /gpfs/software/juwels/otherstages
+
 . $PROJECT_chtb00/htb006/env_lofar_3.2_juwels.sh
 
 file=$SCRATCH_chtb00/htb006/submit_job.sh
