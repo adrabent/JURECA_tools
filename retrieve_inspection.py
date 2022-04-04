@@ -83,6 +83,7 @@ def get_calibrator(cal_obsid, field_name, cal_results_dir, working_directory):
 
 def get_calibrator(cal_obsid, cal_results_dir, working_directory):
 
+	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	logging.info('Checking calibrator observation: \033[35mL' + cal_obsid)
 	cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
 	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
@@ -100,7 +101,7 @@ def get_calibrator(cal_obsid, cal_results_dir, working_directory):
 			return False
 
 	filename = working_directory + '/' + os.path.basename(cal_solution)
-	transfer  = subprocess.Popen(['globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
+	transfer  = subprocess.Popen(['singularity', 'exec', home_directory + '/lta-client.sif', 'globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	if errorcode != 0:
 		logging.error('\033[31mDownloading calibrator results has failed.')
@@ -121,6 +122,7 @@ def get_calibrator(cal_obsid, cal_results_dir, working_directory):
 
 def get_target(targ_obsid, cal_results_dir, working_directory):
 
+	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	logging.info('Checking target observation: \033[35mL' + targ_obsid)
 	cal_solution = cal_results_dir + '/L' + targ_obsid + '/inspection.tar'
 	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
@@ -132,7 +134,7 @@ def get_target(targ_obsid, cal_results_dir, working_directory):
 		return False
 
 	filename = working_directory + '/' + os.path.basename(cal_solution)
-	transfer  = subprocess.Popen(['globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
+	transfer  = subprocess.Popen(['singularity', 'exec', home_directory + '/lta-client.sif', 'globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	if errorcode != 0:
 		logging.error('\033[31mDownloading target results has failed.')
