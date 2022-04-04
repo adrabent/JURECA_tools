@@ -22,14 +22,14 @@ cal_prefix                  = 'pref3_cal_'                                      
 prefactor                   = 'https://github.com/lofar-astron/prefactor.git'      ## location of prefactor
 branch                      = 'master'                                             ## branch to be used
 nodes                       = 24                                                   ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime                    = '03:30:00'                                           ## walltime for the JUWELS queue
+walltime                    = '02:30:00'                                           ## walltime for the JUWELS queue
 mail                        = 'alex@tls-tautenburg.de'                             ## notification email address
 IONEX_server                = 'ftp://ftp.aiub.unibe.ch/CODE/'                      ## URL for CODE downloads
 num_SBs_per_group_var       = 10                                                   ## chunk size 
 max_dppp_threads_var        = 24                                                   ## maximal threads per node per DPPP instance (max 96 on JUWELS)
 max_proc_per_node_limit_var = 2                                                    ## maximal processes per node for DPPP
 num_proc_per_node_var       = 10                                                   ## maximal processes per node for others
-error_tolerance             = 1                                                    ## number of unstaged files still acceptable for running pipelines
+error_tolerance             = 0                                                    ## number of unstaged files still acceptable for running pipelines
 
 
 os.system('clear')
@@ -259,7 +259,6 @@ def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, s
 
 	## applying necessary changes to the parset
 	if calibrator:
-		#shutil.copyfile('/p/project/chtb00/htb006/Pre-Facet-Calibrator.parset', parset)    ### DEBUG flagbp error
 		shutil.copyfile(working_directory + '/prefactor/Pre-Facet-Calibrator.parset', parset)
 		input_path                = os.popen('grep "! cal_input_path" '             + parset).readlines()[0].rstrip('\n').replace('/','\/')
 		input_pattern             = os.popen('grep "! cal_input_pattern" '          + parset).readlines()[0].rstrip('\n').replace('/','\/')
