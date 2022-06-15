@@ -22,7 +22,7 @@ cal_prefix                  = 'pref3_cal_'                                      
 prefactor                   = 'https://github.com/lofar-astron/prefactor.git'      ## location of prefactor
 branch                      = 'master'                                             ## branch to be used
 nodes                       = 24                                                   ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime                    = '02:30:00'                                           ## walltime for the JUWELS queue
+walltime                    = '04:00:00'                                           ## walltime for the JUWELS queue
 mail                        = 'alex@tls-tautenburg.de'                             ## notification email address
 IONEX_server                = 'ftp://ftp.aiub.unibe.ch/CODE/'                      ## URL for CODE downloads
 num_SBs_per_group_var       = 10                                                   ## chunk size 
@@ -292,10 +292,6 @@ def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, s
 		os.system('sed -i "s/' + avg_freqresolution              + '/! avg_freqresolution        = 48.82kHz'                                                                           + '/g" ' + parset)
 		os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 8.'                                                                                 + '/g" ' + parset)
 		os.system('sed -i "s/' + avg_freqresolution_concat       + '/! avg_freqresolution_concat = 97.64kHz'                                                                           + '/g" ' + parset)
-		#os.system('sed -i "s/' + avg_timeresolution              + '/! avg_timeresolution        = 1.'                                                                                 + '/g" ' + parset)
-		#os.system('sed -i "s/' + avg_freqresolution              + '/! avg_freqresolution        = 12.205kHz'                                                                           + '/g" ' + parset)
-		#os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 1.'                                                                                 + '/g" ' + parset)
-		#os.system('sed -i "s/' + avg_freqresolution_concat       + '/! avg_freqresolution_concat = 12.205kHz'                                                                           + '/g" ' + parset)
 
 	os.system(    'sed -i "s/' + prefactor_directory             + '/! prefactor_directory       = ' + working_directory.replace('/','\/') + '\/prefactor'                             + '/g" ' + parset)
 	os.system(    'sed -i "s/' + losoto_directory                + '/! losoto_directory          = \$LOSOTO'                                                                           + '/g" ' + parset)
@@ -402,7 +398,7 @@ def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_director
 		logging.error('Could not find SRM file for: \033[35m' + srm_file)
 		update_status(field_name, target_obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
-		return []
+		return ([], True)
 
 	filename = working_directory + '/' + os.path.basename(srm_file)
 	transfer  = subprocess.Popen(['globus-url-copy', srm_file, 'file://' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
@@ -411,7 +407,7 @@ def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_director
 		logging.error('\033[31mDownloading SRM file has failed.')
 		update_status(field_name, target_obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
-		return []
+		return ([], True)
 
 	srm_list = []
 	srm      = open(filename, 'r').readlines()
