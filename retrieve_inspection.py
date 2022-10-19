@@ -100,7 +100,8 @@ def get_calibrator(cal_obsid, cal_results_dir, working_directory):
 			logging.warning('Could not find any calibrator results for this field in: \033[35m' + cal_solution)
 			return False
 
-	filename = working_directory + '/' + os.path.basename(cal_solution)
+	#filename = working_directory + '/' + os.path.basename(cal_solution)
+	filename = os.environ['HOME'] + '/' + os.path.basename(cal_solution)
 	transfer  = subprocess.Popen(['singularity', 'exec', home_directory + '/lta-client.sif', 'globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	if errorcode != 0:
@@ -133,7 +134,8 @@ def get_target(targ_obsid, cal_results_dir, working_directory):
 		logging.warning('Could not find any target results for this field in: \033[35m' + cal_solution)
 		return False
 
-	filename = working_directory + '/' + os.path.basename(cal_solution)
+	#filename = working_directory + '/' + os.path.basename(cal_solution)
+	filename = os.environ['HOME'] + '/' + os.path.basename(cal_solution)
 	transfer  = subprocess.Popen(['singularity', 'exec', home_directory + '/lta-client.sif', 'globus-url-copy', cal_solution, 'file://' + filename], stdout=subprocess.PIPE)
 	errorcode = transfer.wait()
 	if errorcode != 0:

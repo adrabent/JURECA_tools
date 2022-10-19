@@ -17,9 +17,12 @@ cal_dir                     = 'diskonly/pipelines/SKSP/prefactor_' + pref_versio
 targ_dir                    = 'archive'                                            ## directory for the target
 cal_subdir                  = cal_dir  + '/pref_cal'                               ## subdirectory to look for calibrator files
 targ_subdir                 = targ_dir + '/SKSP_Spider_Pref3'                      ## subdirectory to look for target files
+targ_subdir_linc            = targ_dir + '/SKSP_Spider_LINC'                      ## subdirectory to look for target files
 srm_subdir                  = cal_dir + '/srmfiles'                                ## subdirectory to look for SRM files
 cal_prefix                  = 'pref3_cal_'                                         ## prefix for calibrator solutions
+cal_prefix_linc             = 'linc_cal_'                                         ## prefix for calibrator solutions
 prefactor                   = 'https://github.com/lofar-astron/prefactor.git'      ## location of prefactor
+LINC                        = 'https://git.astron.nl/RD/LINC.git'                  ## location of LINC
 branch                      = 'master'                                             ## branch to be used
 nodes                       = 24                                                   ## number of JUWELS nodes (higher number leads to a longer queueing time)
 walltime                    = '04:00:00'                                           ## walltime for the JUWELS queue
@@ -30,6 +33,7 @@ max_dppp_threads_var        = 24                                                
 max_proc_per_node_limit_var = 2                                                    ## maximal processes per node for DPPP
 num_proc_per_node_var       = 10                                                   ## maximal processes per node for others
 error_tolerance             = 0                                                    ## number of unstaged files still acceptable for running pipelines
+linc                        = False                                                ## run LINC pipeline instead of prefactor genericpipeline version
 
 
 os.system('clear')
@@ -140,6 +144,69 @@ def check_submitted_job(slurm_log, submitted):
 		return 'processed'
 	return 'processing'
 
+def check_submitted_job_linc(slurm_log, submitted):
+
+	with open(slurm_log) as logfile:
+		if 'permanentFail' in logfile.read():
+			logging.error('Pipeline has returned an error. See logfiles for details.')
+			return 'failed'
+		if 'Final process status is success' in logfile.read():
+			logging.info('Final process status is success')
+			return 'processed'
+	return 'processing'
+
+
+def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, working_directory):
+
+	
+	results_directory = working_directory + '/results'
+	obsid_directory   = working_directory + '/L' + obsid
+	summary           = glob.glob(results_directory + '/*.json')[0]
+
+	logging.info('Results of the pipeline will be submitted.')
+	update_status(field_name, target_obsid, 'transferring', 'observations')
+	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mtransferring')
+
+	# upload calibration results
+	if calibrator:
+		os.rename(results_directory, obsid_directory)
+		transfer_dir = ftp + '/' + cal_subdir + '/Spider'
+		filename     = working_directory + '/' + cal_prefix_linc + 'L' + obsid + '.tar'
+		transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
+		pack_and_transfer(filename, obsid_directory, obsid_directory + '/..', transfer_fn, field_name, target_obsid)
+	elif len(results) > 0:
+		transfer_dir = ftp + '/' + targ_subdir_linc + '/L' + obsid
+		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
+		results = sorted(glob.glob(results_directory + '/results/*.ms'))
+		results.append(results_directory + '/inspection')
+		results.append(results_directory + '/cal_solutions.h5')
+		results.append(results_directory + '/logs')
+		results.append(summary)
+		pool = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
+		for result in results:
+			to_pack     = result
+			filename    = to_pack + '.tar'
+			transfer_fn = transfer_dir + '/' + filename.split('/')[-1]
+			output = pool.apply_async(pack_and_transfer, args = (filename, to_pack, to_pack + '/..', transfer_fn, field_name, target_obsid))
+		pool.close()
+		pool.join()
+
+	### check status
+	field = get_one_observation(field_name, target_obsid)
+	if field['status'] == 'failed':
+		logging.warning('Submitting results was incomplete.')
+		return True
+
+	logging.info('Submitting results has been finished.')
+	if calibrator:
+		update_status(field_name, target_obsid, 'READY', 'observations') ## NEEDS TO BE CHANGED SOMEWHEN
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mREADY')
+	else:
+		update_status(field_name, target_obsid, 'DI_Processed', 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mDI_Processed')
+
+	return False
+
 def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory):
 
 	parset            = working_directory + '/pipeline.parset'
@@ -195,7 +262,105 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 
 	return False
 
-def create_submission_script(submit_job, parset, working_directory, submitted):
+def create_submission_script_linc(calibrator, submit_job, parset, working_directory, ms, submitted):
+	
+	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
+	
+	if os.path.isfile(submit_job):
+		logging.warning('\033[33mFile for submission already exists. It will be overwritten.')
+		os.remove(submit_job)
+	
+	jobfile = open(submit_job, 'w')
+	
+	## writing file header and environment
+	jobfile.write('#!/usr/bin/env bash\n')
+	jobfile.write('export PROJECT=${PROJECT_chtb00}/htb006')
+	jobfile.write('export SOFTWARE=${PROJECT}/software_new')
+	jobfile.write('export SINGULARITY_CACHEDIR=${SOFTWARE}')
+	jobfile.write('export SINGULARITY_PULLDIR=${SINGULARITY_CACHEDIR}/pull')
+	jobfile.write('export CWL_SINGULARITY_CACHE=${SINGULARITY_PULLDIR}')
+	
+	## clear singularity cache
+	jobfile.write('singularity cache clean -f')
+	jobfile.write('singularity pull --force --name astronrd_linc.sif docker://astronrd/linc')
+	
+	## extracting directories for IONEX and the TGSS ADR skymodel
+	if not calibrator:
+		jobfile.write('singularity exec docker://astronrd/linc createRMh5parm.py --ionexpath ' + working_directory + '/pipeline/ --server ' + IONEX_server + ' --solsetName target ' + os.path.abspath(ms) + ' ' + cal_solutions + '\n')
+		target_skymodel = working_directory + '/pipeline/target.skymodel'
+		if os.path.exists(target_skymodel):
+			os.remove(target_skymodel)
+		jobfile.write('singularity exec docker://astronrd/linc download_skymodel_target.py ' + os.path.abspath(ms) + ' ' + target_skymodel + '\n')
+		pipeline = 'HBA_target'
+	else:
+		pipeline = 'HBA_calibrator'
+	
+	## overwrite script-wide defaults for LINC test purposes
+	nodes = 1
+	walltime = '06:00:00'
+	## write-up of final command
+	jobfile.write('\n')
+	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
+	jobfile.close()
+	
+	os.system('chmod +x ' + submit_job)
+	os.rename(submit_job, submit_job + '.sh')
+	subprocess.Popen(['touch', submitted])
+	
+	return(0)
+
+def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_files):
+
+	submit_job = working_directory + '/../submit_job'
+	parset     = working_directory + '/pipeline.json'
+
+	## downloading LINC
+	filename = working_directory + '/LINC.tar'
+	logging.info('Downloading current LINC version from \033[35m' + LINC + '\033[32m to \033[35m' + working_directory + '/linc')
+	if os.path.exists(working_directory + '/LINC'):
+		logging.warning('Overwriting old LINC directory...')
+		shutil.rmtree(working_directory + '/linc', ignore_errors = True)
+
+	download = subprocess.Popen(['git', 'clone', '-b', branch, LINC, working_directory + '/linc'], stdout=subprocess.PIPE)
+	errorcode = download.wait()
+	if errorcode != 0:
+		update_status(field_name, obsid, 'failed', 'observations')
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
+		logging.error('\033[31m Downloading LINC has failed.')
+		return True
+	os.chdir(working_directory + '/linc')
+	commit = os.popen('git show | grep commit | cut -f2- -d" "').readlines()[0].strip()
+
+	## create input JSON file
+	config = {}
+	msin = []
+	for ms in glob.glob(working_directory + '*.MS'):
+		msin.append({"class": "Directory", "path": os.path.abspath(ms)})
+	config['msin'] = msin
+	if calibrator:
+		config['cal_solutions'] = {"class": "File", "path": working_directory + 'results/cal_solutions.h5'}
+
+	with open(parset, 'w') as fp:
+		json.dump(config, fp)
+
+	logging.info('Creating submission script in \033[35m' + submit_job)
+	create_submission_script_linc(calibrator, submit_job, parset, working_directory, ms, submitted)
+	
+	slurm_list = glob.glob(slurm_files)
+	for slurm_file in slurm_list:
+		os.remove(slurm_file)
+
+	logging.info('\033[0mWaiting for submission\033[0;5m...')
+	while os.path.exists(submit_job + '.sh'):
+		time.sleep(5)
+	
+	update_status(field_name, obsid, 'submitted', 'observations')
+	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35msubmitted.')
+	logging.info('Pipeline has been submitted.')
+
+	return False
+
+def create_submission_script(calibrator, submit_job, parset, working_directory, obsid, submitted):
 	
 	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	
@@ -226,6 +391,13 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	except IndexError:
 		pass
 	
+	walltime = '04:00:00'
+	## exceptional processing
+	if not calibrator:
+		if '2003568' in obsid or '2003573' in obsid or '2005608' in obsid or '2005609' in obsid:
+			walltime = '06:00:00'
+
+	print(walltime)
 	## write-up of final command
 	jobfile.write('\n')
 	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_pipeline.sh ' + parset + ' ' + working_directory)
@@ -234,6 +406,8 @@ def create_submission_script(submit_job, parset, working_directory, submitted):
 	os.system('chmod +x ' + submit_job)
 	os.rename(submit_job, submit_job + '.sh')
 	subprocess.Popen(['touch', submitted])
+	
+	return(0)
 
 def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, slurm_files):
 
@@ -288,10 +462,14 @@ def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, s
 		os.system('sed -i "s/' + input_pattern.replace('*','\*') + '/! target_input_pattern      = \*.MS'                                                                              + '/g" ' + parset)
 		os.system('sed -i "s/' + cal_solutions                   + '/! cal_solutions             = ' + working_directory.replace('/','\/') + '\/results\/cal_values\/cal_solutions.h5' + '/g" ' + parset)
 		os.system('sed -i "s/' + min_unflagged_fraction          + '/! min_unflagged_fraction    = 0.05'                                                                               + '/g" ' + parset)
-		os.system('sed -i "s/' + avg_timeresolution              + '/! avg_timeresolution        = 4.'                                                                                 + '/g" ' + parset)
-		os.system('sed -i "s/' + avg_freqresolution              + '/! avg_freqresolution        = 48.82kHz'                                                                           + '/g" ' + parset)
-		os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 8.'                                                                                 + '/g" ' + parset)
-		os.system('sed -i "s/' + avg_freqresolution_concat       + '/! avg_freqresolution_concat = 97.64kHz'                                                                           + '/g" ' + parset)
+		if '2003568' in obsid or '2003573' in obsid or '2005608' in obsid or '2005609' in obsid:
+			os.system('sed -i "s/' + avg_timeresolution              + '/! avg_timeresolution        = 1.'                                                                                 + '/g" ' + parset)
+			os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 1.'                                                                                 + '/g" ' + parset)
+		else:
+			os.system('sed -i "s/' + avg_timeresolution              + '/! avg_timeresolution        = 4.'                                                                                 + '/g" ' + parset)
+			os.system('sed -i "s/' + avg_freqresolution              + '/! avg_freqresolution        = 48.82kHz'                                                                           + '/g" ' + parset)
+			os.system('sed -i "s/' + avg_timeresolution_concat       + '/! avg_timeresolution_concat = 8.'                                                                                 + '/g" ' + parset)
+			os.system('sed -i "s/' + avg_freqresolution_concat       + '/! avg_freqresolution_concat = 97.64kHz'                                                                           + '/g" ' + parset)
 
 	os.system(    'sed -i "s/' + prefactor_directory             + '/! prefactor_directory       = ' + working_directory.replace('/','\/') + '\/prefactor'                             + '/g" ' + parset)
 	os.system(    'sed -i "s/' + losoto_directory                + '/! losoto_directory          = \$LOSOTO'                                                                           + '/g" ' + parset)
@@ -302,7 +480,7 @@ def run_prefactor(calibrator, field_name, obsid, working_directory, submitted, s
 	os.system(    'sed -i "1 i\#####GIT COMMIT '                                                     + commit                                                                          + '"   ' + parset)
 
 	logging.info('Creating submission script in \033[35m' + submit_job)
-	create_submission_script(submit_job, parset, working_directory, submitted)
+	create_submission_script(calibrator, submit_job, parset, working_directory, obsid, submitted)
 	
 	if os.path.exists(working_directory + '/pipeline/statefile'):
 		os.remove(working_directory + '/pipeline/statefile')
@@ -374,7 +552,7 @@ def download_data(url, obsid, field_name, working_directory):
 		logging.warning('Using wget for download!')
 		url = 'https://lta-download.lofar.psnc.pl/lofigrid/SRMFifoGet.py?surl=srm://lta-head.lofar.psnc.pl:8443/' + '/'.join(url.split('/')[3:])
 		logging.info('Downloading file: \033[35m' + filename)
-		download   = subprocess.Popen(['wget',  url, '-O' + filename], stdout=subprocess.PIPE)
+		download   = subprocess.Popen(['wget', '--no-check-certificate', url, '-O' + filename], stdout=subprocess.PIPE)
 	else:
 		logging.info('Downloading file: \033[35m' + filename)
 		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
@@ -578,7 +756,10 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 			slurm_log = slurm_list[-1]
 			job_id = os.path.basename(slurm_log).lstrip('slurm-').rstrip('.out')
 			logging.info('Checking current status of the submitted job: \033[35m' + job_id)
-			log_information = check_submitted_job(slurm_log, submitted).replace('\033[32m','').replace('\033[0m','')
+			if linc:
+				log_information = check_submitted_job_linc(slurm_log, submitted).replace('\033[32m','').replace('\033[0m','')
+			else:
+				log_information = check_submitted_job(slurm_log, submitted).replace('\033[32m','').replace('\033[0m','')
 			if log_information == 'failed':
 				logging.error('Processing of pipeline has been failed. See errorlog for details.')
 				update_status(field_name, target_obsid, 'failed', 'observations')
@@ -592,7 +773,10 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				time.sleep(60)
 			else:
 				logging.info('Pipeline has finished successfully.')
-				error = submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory)
+				if linc:
+					error = submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, working_directory)
+				else:
+					error = submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_directory)
 				if not error:
 					logging.info('Cleaning working directory.')
 					shutil.rmtree(working_directory, ignore_errors = True)
@@ -621,8 +805,12 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	### run prefactor
 	update_status(field_name, target_obsid, 'unpacked', 'observations')
 	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35munpacked.')
-	logging.info('Prefactor pipeline will be started.')
-	run_prefactor(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
+	if linc:
+		logging.info('LINC pipeline will be started.')
+		run_linc(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
+	else:
+		logging.info('Prefactor pipeline will be started.')
+		run_prefactor(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
 
 	return
 
