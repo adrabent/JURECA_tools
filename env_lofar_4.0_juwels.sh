@@ -36,13 +36,13 @@ export CWLTOOL_OPTIONS='--singularity --parallel'
 ## Prefactor function definition
 linc () {
     export WORKDIR=$1/runtime
-    export OUTDIR=$1/results
+    export OUTDIR=$1/output
     export LOGDIR=$1/logs
     export PIPELINE=$2
     export INPUT_JSON=$3
 #     export TMPDIR=${WORKDIR}
     mkdir -pv ${OUTDIR} ${WORKDIR}  ${LOGDIR}
-    toil --version
+#     toil --version
 #     toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --tmpdir-prefix ${WORKDIR}/tmp- --outdir ${OUTDIR} --log-dir ${LOGDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${SOFTWARE}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
 #     toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --log-dir ${LOGDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${SOFTWARE}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
     toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${SOFTWARE}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
@@ -50,20 +50,20 @@ linc () {
 
 linc_restart () {
     export WORKDIR=$1/runtime
-    export OUTDIR=$1/results
+    export OUTDIR=$1/output
     export LOGDIR=$1/logs
     export PIPELINE=$2
     export INPUT_JSON=$3
 #     export TMPDIR=${WORKDIR}
     mkdir -pv ${OUTDIR} ${WORKDIR}  ${LOGDIR}
-    toil --version
+#     toil --version
     toil ${CWL_OPTIONS} --restart --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${SOFTWARE}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
 }
 
 linc_cwltool () {
-    WORKDIR=$1/pipeline/
-    OUTDIR=$1/results/
-    LOGDIR=$1/logs/
+    WORKDIR=$1/pipeline
+    OUTDIR=$1/output
+    LOGDIR=$1/logs
     PIPELINE=$2
     INPUT_JSON=$3
     mkdir -pv ${OUTDIR} ${WORKDIR}

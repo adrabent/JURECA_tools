@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 
 export PROJECT=$PROJECT_chtb00/htb006
+export SCRATCH=$SCRATCH_chtb00/htb006
 
 export PYTHONPATH=$PROJECT/tools/GRID_LRT:${PYTHONPATH}
 export PYTHONPATH=$PROJECT/tools/GRID_PiCaS_Launcher:${PYTHONPATH}

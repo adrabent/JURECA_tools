@@ -6,8 +6,9 @@ Surveys KSP monitoring script -- see https://github.com/adrabent/JURECA_tools
 """
 import optparse, logging
 import datetime, time
-import os, sys, shutil, glob
+import os, sys, shutil, glob, json
 import subprocess, multiprocessing
+import random
 
 from surveys_utils import *
 
@@ -33,8 +34,8 @@ max_dppp_threads_var        = 24                                                
 max_proc_per_node_limit_var = 2                                                    ## maximal processes per node for DPPP
 num_proc_per_node_var       = 10                                                   ## maximal processes per node for others
 error_tolerance             = 0                                                    ## number of unstaged files still acceptable for running pipelines
-linc                        = False                                                ## run LINC pipeline instead of prefactor genericpipeline version
-
+linc                        = True                                                 ## run LINC pipeline instead of prefactor genericpipeline version
+clear_image                 = False                                                ## update the used Singularity image
 
 os.system('clear')
 print('\033[30;1m################################################')
@@ -64,11 +65,16 @@ def add_coloring_to_emit_ansi(fn):
 
 def my_handler(type, value, tb):
 	exception = logger.critical("{0}".format(str(value)))
-	lock = os.environ['SCRATCH_chtb00'] + '/htb006' '/.lock'
-	if os.path.exists(lock):
-		os.remove(lock)
 	time.sleep(300)
 
+def write_file(lock, contents, force = False):
+	while is_running(lock) and not force:
+		logging.info('\033[0mWaiting for another process to launch\033[0;5m...')
+		time.sleep(60)
+	lock_file = open(lock, 'w')
+	lock_file.write(str(contents))
+	lock_file.close()
+	
 def is_running(lock_file):
 	if os.path.isfile(lock_file):
 		return True
@@ -147,19 +153,33 @@ def check_submitted_job(slurm_log, submitted):
 def check_submitted_job_linc(slurm_log, submitted):
 
 	with open(slurm_log) as logfile:
-		if 'permanentFail' in logfile.read():
-			logging.error('Pipeline has returned an error. See logfiles for details.')
-			return 'failed'
-		if 'Final process status is success' in logfile.read():
+		log = logfile.read()
+		if 'CANCELLED DUE TO TIME LIMIT' in log:
+			logging.warning('Pipeline has been cancelled due to time limit.')
+			return 'timeout'
+		#if 'Got exit code -15' in log:
+			#logging.warning('Pipeline has been cancelled due to time limit.')
+			#return 'timeout'
+		#if 'Job failed with exit value -15' in log:
+			#logging.warning('Pipeline has been cancelled due to time limit.')
+			#return 'timeout'
+		if 'Final process status is success' in log:
 			logging.info('Final process status is success')
 			return 'processed'
+		if 'Finished toil run successfully' in log:
+			logging.info('Final process status is success')
+			return 'processed'
+		if 'permanentFail' in log:
+			logging.error('Pipeline has returned an error. See logfiles for details.')
+			return 'failed'
 	return 'processing'
 
 
 def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, working_directory):
 
 	
-	results_directory = working_directory + '/results'
+	results_directory = working_directory + '/output'
+	results = sorted(glob.glob(results_directory + '/results/*.ms'))
 	obsid_directory   = working_directory + '/L' + obsid
 	summary           = glob.glob(results_directory + '/*.json')[0]
 
@@ -173,11 +193,10 @@ def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, workin
 		transfer_dir = ftp + '/' + cal_subdir + '/Spider'
 		filename     = working_directory + '/' + cal_prefix_linc + 'L' + obsid + '.tar'
 		transfer_fn  = transfer_dir + '/' + filename.split('/')[-1]
-		pack_and_transfer(filename, obsid_directory, obsid_directory + '/..', transfer_fn, field_name, target_obsid)
+		pack_and_transfer(filename, obsid_directory, os.path.dirname(obsid_directory), transfer_fn, field_name, target_obsid)
 	elif len(results) > 0:
 		transfer_dir = ftp + '/' + targ_subdir_linc + '/L' + obsid
 		subprocess.Popen(['uberftp', '-mkdir', transfer_dir], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
-		results = sorted(glob.glob(results_directory + '/results/*.ms'))
 		results.append(results_directory + '/inspection')
 		results.append(results_directory + '/cal_solutions.h5')
 		results.append(results_directory + '/logs')
@@ -187,7 +206,7 @@ def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, workin
 			to_pack     = result
 			filename    = to_pack + '.tar'
 			transfer_fn = transfer_dir + '/' + filename.split('/')[-1]
-			output = pool.apply_async(pack_and_transfer, args = (filename, to_pack, to_pack + '/..', transfer_fn, field_name, target_obsid))
+			output = pool.apply_async(pack_and_transfer, args = (filename, to_pack, os.path.dirname(to_pack), transfer_fn, field_name, target_obsid))
 		pool.close()
 		pool.join()
 
@@ -262,35 +281,40 @@ def submit_results(calibrator, field_name, obsid, target_obsid, ftp, working_dir
 
 	return False
 
-def create_submission_script_linc(calibrator, submit_job, parset, working_directory, ms, submitted):
+def create_submission_script_linc(calibrator, submit_job, parset, cal_solutions, target_skymodel, working_directory, ms, submitted, restart):
 	
 	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	
-	if os.path.isfile(submit_job):
-		logging.warning('\033[33mFile for submission already exists. It will be overwritten.')
-		os.remove(submit_job)
+	while os.path.isfile(submit_job):
+		logging.warning('\033[33mFile for submission already exists.')
+		time.sleep(60)
 	
 	jobfile = open(submit_job, 'w')
 	
 	## writing file header and environment
 	jobfile.write('#!/usr/bin/env bash\n')
-	jobfile.write('export PROJECT=${PROJECT_chtb00}/htb006')
-	jobfile.write('export SOFTWARE=${PROJECT}/software_new')
-	jobfile.write('export SINGULARITY_CACHEDIR=${SOFTWARE}')
-	jobfile.write('export SINGULARITY_PULLDIR=${SINGULARITY_CACHEDIR}/pull')
-	jobfile.write('export CWL_SINGULARITY_CACHE=${SINGULARITY_PULLDIR}')
+	jobfile.write('export PROJECT=${PROJECT_chtb00}/htb006\n')
+	jobfile.write('export SOFTWARE=${PROJECT}/software_new\n')
+	jobfile.write('export SINGULARITY_CACHEDIR=${SOFTWARE}\n')
+	jobfile.write('export SINGULARITY_PULLDIR=${SINGULARITY_CACHEDIR}/pull\n')
+	jobfile.write('export CWL_SINGULARITY_CACHE=${SINGULARITY_PULLDIR}\n')
+	jobfile.write("export SINGULARITY_TMPDIR='/tmp'\n")
 	
 	## clear singularity cache
-	jobfile.write('singularity cache clean -f')
-	jobfile.write('singularity pull --force --name astronrd_linc.sif docker://astronrd/linc')
+	if not restart and clear_image:
+		jobfile.write('\n')
+		jobfile.write('singularity cache clean -f\n')
+		jobfile.write('singularity pull --force --name astronrd_linc.sif docker://astronrd/linc\n')
+		jobfile.write('\n')
 	
 	## extracting directories for IONEX and the TGSS ADR skymodel
 	if not calibrator:
-		jobfile.write('singularity exec docker://astronrd/linc createRMh5parm.py --ionexpath ' + working_directory + '/pipeline/ --server ' + IONEX_server + ' --solsetName target ' + os.path.abspath(ms) + ' ' + cal_solutions + '\n')
-		target_skymodel = working_directory + '/pipeline/target.skymodel'
-		if os.path.exists(target_skymodel):
-			os.remove(target_skymodel)
-		jobfile.write('singularity exec docker://astronrd/linc download_skymodel_target.py ' + os.path.abspath(ms) + ' ' + target_skymodel + '\n')
+		if not restart:
+			jobfile.write('singularity exec docker://astronrd/linc createRMh5parm.py --ionexpath ' + working_directory + '/pipeline/ --server ' + IONEX_server + ' --solsetName target ' + os.path.abspath(ms) + ' ' + cal_solutions + '\n')
+			if os.path.exists(target_skymodel):
+				os.remove(target_skymodel)
+			target_name = '_'.join(os.path.basename(working_directory).split('_')[:-1])
+			jobfile.write('singularity exec docker://astronrd/linc download_skymodel_target.py --targetname ' + target_name + ' ' + os.path.abspath(ms) + ' ' + target_skymodel + '\n')
 		pipeline = 'HBA_target'
 	else:
 		pipeline = 'HBA_calibrator'
@@ -300,7 +324,13 @@ def create_submission_script_linc(calibrator, submit_job, parset, working_direct
 	walltime = '06:00:00'
 	## write-up of final command
 	jobfile.write('\n')
-	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
+	if not restart:
+		#if calibrator:
+			#jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc_cwltool.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
+		#else:
+		jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc.sh '         + working_directory + ' ' + pipeline + ' ' + parset)
+	else:
+		jobfile.write(    'sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc_restart.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
 	jobfile.close()
 	
 	os.system('chmod +x ' + submit_job)
@@ -309,42 +339,56 @@ def create_submission_script_linc(calibrator, submit_job, parset, working_direct
 	
 	return(0)
 
-def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_files):
+def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_files, restart):
 
-	submit_job = working_directory + '/../submit_job'
-	parset     = working_directory + '/pipeline.json'
+	submit_job      = working_directory + '/../submit_job'
+	parset          = working_directory + '/pipeline.json'
+	target_skymodel = working_directory + '/pipeline/target.skymodel'
+	cal_solutions   = None
+	ms              = None
 
 	## downloading LINC
-	filename = working_directory + '/LINC.tar'
-	logging.info('Downloading current LINC version from \033[35m' + LINC + '\033[32m to \033[35m' + working_directory + '/linc')
-	if os.path.exists(working_directory + '/LINC'):
-		logging.warning('Overwriting old LINC directory...')
-		shutil.rmtree(working_directory + '/linc', ignore_errors = True)
+	if not restart:
+		filename = working_directory + '/LINC.tar'
+		logging.info('Downloading current LINC version from \033[35m' + LINC + '\033[32m to \033[35m' + working_directory + '/linc')
+		if os.path.exists(working_directory + '/linc'):
+			logging.warning('Overwriting old LINC directory...')
+			shutil.rmtree(working_directory + '/linc', ignore_errors = True)
 
-	download = subprocess.Popen(['git', 'clone', '-b', branch, LINC, working_directory + '/linc'], stdout=subprocess.PIPE)
-	errorcode = download.wait()
-	if errorcode != 0:
-		update_status(field_name, obsid, 'failed', 'observations')
-		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
-		logging.error('\033[31m Downloading LINC has failed.')
-		return True
-	os.chdir(working_directory + '/linc')
-	commit = os.popen('git show | grep commit | cut -f2- -d" "').readlines()[0].strip()
+		download = subprocess.Popen(['git', 'clone', '-b', branch, LINC, working_directory + '/linc'], stdout=subprocess.PIPE)
+		errorcode = download.wait()
+		if errorcode != 0:
+			update_status(field_name, obsid, 'failed', 'observations')
+			logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
+			logging.error('\033[31m Downloading LINC has failed.')
+			return True
+		os.chdir(working_directory + '/linc')
+		commit = os.popen('git show | grep commit | cut -f2- -d" "').readlines()[0].strip()
 
-	## create input JSON file
-	config = {}
-	msin = []
-	for ms in glob.glob(working_directory + '*.MS'):
-		msin.append({"class": "Directory", "path": os.path.abspath(ms)})
-	config['msin'] = msin
-	if calibrator:
-		config['cal_solutions'] = {"class": "File", "path": working_directory + 'results/cal_solutions.h5'}
+		## create input JSON file
+		config = {}
+		msin = []
+		for ms in glob.glob(working_directory + '/*.MS'):
+			msin.append({"class": "Directory", "path": os.path.abspath(ms)})
+		config['msin'] = msin
+		if not calibrator:
+			if os.path.exists(working_directory + '/results/cal_solutions.h5'):
+				cal_solutions = working_directory + '/results/cal_solutions.h5'
+			elif os.path.exists(working_directory + '/results/cal_values/cal_solutions.h5'):
+				cal_solutions = working_directory + '/results/cal_values/cal_solutions.h5'
+			else:
+				logging.error('\033[31m Calibration solution set not found')
+				update_status(field_name, obsid, 'failed', 'observations')
+				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
+				return True
+			config['cal_solutions']   = {"class": "File", "path": cal_solutions}
+			config['target_skymodel'] = {"class": "File", "path": target_skymodel}
 
-	with open(parset, 'w') as fp:
-		json.dump(config, fp)
+		with open(parset, 'w') as fp:
+			json.dump(config, fp)
 
 	logging.info('Creating submission script in \033[35m' + submit_job)
-	create_submission_script_linc(calibrator, submit_job, parset, working_directory, ms, submitted)
+	create_submission_script_linc(calibrator, submit_job, parset, cal_solutions, target_skymodel, working_directory, ms, submitted, restart)
 	
 	slurm_list = glob.glob(slurm_files)
 	for slurm_file in slurm_list:
@@ -666,15 +710,19 @@ def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working
 
 	return (False, False)
 
-def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp'):
+def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp', process_id = 0, parallel = False):
 
 	## load working environment
 	working_directory = os.environ['SCRATCH_chtb00'] + '/htb006'
 	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	server_config     = os.environ['HOME']           + '/.surveys'
-	last_observation  = working_directory + '/.observation'
-	slurm_files       = home_directory    + '/slurm-*.out'
+	last_observation  = working_directory + '/.observation_' + str(process_id)
+	lock              = working_directory + '/.lock'
 	logging.info('\033[0mWorking directory is ' + working_directory)
+    
+	## removing existing lock file
+	if is_running(lock):
+		os.remove(lock)
 
 	## load PiCaS credentials and connect to server
 	logging.info('\033[0mConnecting to server: ' + server)
@@ -720,10 +768,8 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### reserve following processes
 	logging.info('Selected target field observation: \033[35m' + observation)
-	observation_file = open(last_observation, 'w')
-	observation_file.write(observation)
-	observation_file.close()
-	
+	write_file(last_observation, observation, force = True)
+
 	### create subdirectory
 	working_directory  = os.environ['SCRATCH_chtb00'] + '/htb006/' + observation ## for subdirectories
 	submitted          = working_directory + '/.submitted'
@@ -733,7 +779,6 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 
 	### load observation from database and check for calibrator observation
 	field               = get_one_observation(field_name, target_obsid)
-	print(field)
 	cal_obsid           = str(field['calibrator_id'])
 	(calibrator, error) = get_calibrator(cal_obsid, field_name, target_obsid, ftp + '/' + cal_subdir, working_directory, submitted)
 	if calibrator:
@@ -748,9 +793,13 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 		logging.info('Selected target observation: \033[35mL' + obsid)
 
 	### check whether a job has been already submitted
-	submitted = working_directory + '/.submitted'
+	submitted   = working_directory + '/.submitted'
+	slurm_files = working_directory + '/slurm-*.out'
 	while is_running(submitted): 
 		logging.info('\033[0mA pipeline has already been submitted.')
+		if parallel: 
+			write_file(lock, str(random.randint(0, 1e5)))
+			parallel = False
 		slurm_list = glob.glob(slurm_files)
 		while len(slurm_list) > 0 and error == False:
 			slurm_log = slurm_list[-1]
@@ -771,6 +820,11 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				update_status(field_name, target_obsid, 'processing', 'observations')
 				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mprocessing.')
 				time.sleep(60)
+			elif log_information == 'timeout':
+				logging.warning('Pipeline processing has encountered walltime limit.')
+				logging.info('LINC pipeline will be restarted.')
+				run_linc(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files, restart = True)
+				break
 			else:
 				logging.info('Pipeline has finished successfully.')
 				if linc:
@@ -781,6 +835,8 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 					logging.info('Cleaning working directory.')
 					shutil.rmtree(working_directory, ignore_errors = True)
 				os.remove(last_observation)
+				if int(process_id) == 0:
+					write_file(lock, str(process_id))
 				return
 		time.sleep(60)
 
@@ -798,19 +854,24 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	### lock program
 	field = get_one_observation(field_name, target_obsid)
 	if field['status'] == 'failed' or field['status'] == 'not_staged' or error:
-		logging.error('Could not proceed with selected field. Please check database or logfiles for any errors.')
+		logging.error('Could not proceed with \033[35m' + field_name +'\033[31m. Please check database or logfiles for any errors.')
 		os.remove(last_observation)
+		if int(process_id) == 0 or field['status'] == 'not_staged':
+			write_file(lock, str(process_id))
 		return
 
-	### run prefactor
+	### run prefactor or linc
 	update_status(field_name, target_obsid, 'unpacked', 'observations')
 	logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35munpacked.')
 	if linc:
 		logging.info('LINC pipeline will be started.')
-		run_linc(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
+		run_linc(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files, restart = False)
 	else:
 		logging.info('Prefactor pipeline will be started.')
 		run_prefactor(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files)
+
+	### create lock file for keeping the monitoring active
+	write_file(lock, str(process_id))
 
 	return
 
@@ -818,9 +879,10 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 if __name__=='__main__':
 	# Get command-line options.
 	opt = optparse.OptionParser(usage='%prog ', version='%prog '+_version, description=__doc__)
-	opt.add_option('-s', '--server', help='LoTSS MySQL server URL:port', action='store_true', default='localhost:3306')
-	opt.add_option('-d', '--database', help='Define which database to use', action='store_true', default='Juelich')
-	opt.add_option('-f', '--ftp', help='FTP server hosting current prefactor version', action='store_true', default='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp')
+	opt.add_option('-s', '--server', help='LoTSS MySQL server URL:port', default='localhost:3306')
+	opt.add_option('-d', '--database', help='Define which database to use', default='Juelich')
+	opt.add_option('-f', '--ftp', help='FTP server hosting current prefactor version', default='gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp')
+	opt.add_option('-p', '--id', help='Provide a process ID for the running job. Allows parallel runs', default = 0)
 	(options, args) = opt.parse_args()
 
 	format_stream = logging.Formatter("%(asctime)s\033[1m %(levelname)s:\033[0m %(message)s","%Y-%m-%d %H:%M:%S")
@@ -849,7 +911,7 @@ if __name__=='__main__':
 	logging.info('\033[0mLog file is written to ' + LOG_FILENAME)
 
 	# start running script
-	main(options.server, options.database, options.ftp)
+	main(options.server, options.database, options.ftp, options.id)
 
 	# monitoring has been finished
 	logging.info('\033[30;4mMonitoring has been finished.\033[0m')
