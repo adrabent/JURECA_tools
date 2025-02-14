@@ -1,4 +1,4 @@
-#!/p/project/chtb00/htb006/software_new/envs/surveys/bin/python3
+#!/p/project1/chtb00/htb006/software_new/envs/surveys/bin/python3
 # -*- coding: utf-8 -*-
 
 """
@@ -11,6 +11,7 @@ import subprocess, multiprocessing
 import random
 
 from surveys_utils import *
+from get_juelich_setup import *
 
 _version                    = '1.0'                                                ## program version
 pref_version                = 'v3.0'                                               ## prefactor version for gathering solutions from the GRID
@@ -18,17 +19,17 @@ cal_dir                     = 'diskonly/pipelines/SKSP/prefactor_' + pref_versio
 targ_dir                    = 'archive'                                            ## directory for the target
 cal_subdir                  = cal_dir  + '/pref_cal'                               ## subdirectory to look for calibrator files
 targ_subdir                 = targ_dir + '/SKSP_Spider_Pref3'                      ## subdirectory to look for target files
-targ_subdir_linc            = targ_dir + '/SKSP_Spider_LINC'                      ## subdirectory to look for target files
+targ_subdir_linc            = targ_dir + '/SKSP_Spider_LINC'                       ## subdirectory to look for target files
 srm_subdir                  = cal_dir + '/srmfiles'                                ## subdirectory to look for SRM files
 cal_prefix                  = 'pref3_cal_'                                         ## prefix for calibrator solutions
-cal_prefix_linc             = 'linc_cal_'                                         ## prefix for calibrator solutions
+cal_prefix_linc             = 'linc_cal_'                                          ## prefix for calibrator solutions
 prefactor                   = 'https://github.com/lofar-astron/prefactor.git'      ## location of prefactor
 LINC                        = 'https://git.astron.nl/RD/LINC.git'                  ## location of LINC
-branch                      = 'master'                                             ## branch to be used
+branch                      = 'hotfix/demix_crash'                                 ## branch to be used
 nodes                       = 24                                                   ## number of JUWELS nodes (higher number leads to a longer queueing time)
-walltime                    = '04:00:00'                                           ## walltime for the JUWELS queue
+walltime                    = '24:00:00'                                           ## walltime for the JUWELS queue
 mail                        = 'alex@tls-tautenburg.de'                             ## notification email address
-IONEX_server                = 'ftp://ftp.aiub.unibe.ch/CODE/'                      ## URL for CODE downloads
+IONEX_server                = 'http://chapman.upc.es/'                             ## URL for CODE downloads
 num_SBs_per_group_var       = 10                                                   ## chunk size 
 max_dppp_threads_var        = 24                                                   ## maximal threads per node per DPPP instance (max 96 on JUWELS)
 max_proc_per_node_limit_var = 2                                                    ## maximal processes per node for DPPP
@@ -36,6 +37,11 @@ num_proc_per_node_var       = 10                                                
 error_tolerance             = 0                                                    ## number of unstaged files still acceptable for running pipelines
 linc                        = True                                                 ## run LINC pipeline instead of prefactor genericpipeline version
 clear_image                 = False                                                ## update the used Singularity image
+keep_existing_files         = False                                                ## in case of upload problems keep existing uploaded files
+make_structure_plot         = False                                                ## regular processing with making the structure function plot
+max_number_of_fields        = 15                                                   ## maximum amount of fields to be processed in parallel
+run_in_parallel             = True                                                 ## specify whether to run in parallel or not
+special_fields              = ['343226', '823948', '573955', '576819', '806044', '689118', '2023483']   ## treat those fields specially
 
 os.system('clear')
 print('\033[30;1m################################################')
@@ -157,19 +163,25 @@ def check_submitted_job_linc(slurm_log, submitted):
 		if 'CANCELLED DUE TO TIME LIMIT' in log:
 			logging.warning('Pipeline has been cancelled due to time limit.')
 			return 'timeout'
-		#if 'Got exit code -15' in log:
-			#logging.warning('Pipeline has been cancelled due to time limit.')
-			#return 'timeout'
-		#if 'Job failed with exit value -15' in log:
-			#logging.warning('Pipeline has been cancelled due to time limit.')
-			#return 'timeout'
+		if 'Got exit code -15' in log:
+			logging.warning('Pipeline has been cancelled due to time limit.')
+			return 'timeout'
+		if 'Job failed with exit value -15' in log:
+			logging.warning('Pipeline has been cancelled due to time limit.')
+			return 'timeout'
 		if 'Final process status is success' in log:
 			logging.info('Final process status is success')
 			return 'processed'
-		if 'Finished toil run successfully' in log:
+		if 'Successfully deleted the job store:' in log:
 			logging.info('Final process status is success')
 			return 'processed'
-		if 'permanentFail' in log:
+		if 'is completely failed' in log:
+			logging.error('Pipeline has returned an error. See logfiles for details.')
+			return 'failed'
+		if 'toil.jobStores.abstractJobStore.NoSuchFileException' in log:
+			logging.error('Pipeline has returned an error. See logfiles for details.')
+			return 'failed'
+		if 'Workflow cannot make any more progress' in log:
 			logging.error('Pipeline has returned an error. See logfiles for details.')
 			return 'failed'
 	return 'processing'
@@ -177,7 +189,6 @@ def check_submitted_job_linc(slurm_log, submitted):
 
 def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, working_directory):
 
-	
 	results_directory = working_directory + '/output'
 	results = sorted(glob.glob(results_directory + '/results/*.ms'))
 	obsid_directory   = working_directory + '/L' + obsid
@@ -202,6 +213,7 @@ def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, workin
 		results.append(results_directory + '/logs')
 		results.append(summary)
 		pool = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
+		#pool = multiprocessing.Pool(processes = 1)
 		for result in results:
 			to_pack     = result
 			filename    = to_pack + '.tar'
@@ -221,8 +233,12 @@ def submit_results_linc(calibrator, field_name, obsid, target_obsid, ftp, workin
 		update_status(field_name, target_obsid, 'READY', 'observations') ## NEEDS TO BE CHANGED SOMEWHEN
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mREADY')
 	else:
-		update_status(field_name, target_obsid, 'DI_Processed', 'observations')
-		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mDI_Processed')
+		if len(results) < 23:
+			update_status(field_name, target_obsid, 'PREF_NUM_MS_FAIL', 'observations')
+			logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mPREF_NUM_MS_FAIL')
+		else:
+			update_status(field_name, target_obsid, 'DI_Processed', 'observations')
+			logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mDI_Processed')
 
 	return False
 
@@ -285,7 +301,10 @@ def create_submission_script_linc(calibrator, submit_job, parset, cal_solutions,
 	
 	home_directory    = os.environ['PROJECT_chtb00'] + '/htb006'
 	
-	while os.path.isfile(submit_job):
+	logging.info('\033[0mWaiting for submission file to be created\033[0;5m...')
+	time.sleep(random.randint(0,60))
+	
+	while os.path.isfile(submit_job) or os.path.isfile(submit_job + '.sh'):
 		logging.warning('\033[33mFile for submission already exists.')
 		time.sleep(60)
 	
@@ -321,16 +340,18 @@ def create_submission_script_linc(calibrator, submit_job, parset, cal_solutions,
 	
 	## overwrite script-wide defaults for LINC test purposes
 	nodes = 1
-	walltime = '06:00:00'
+	
 	## write-up of final command
 	jobfile.write('\n')
-	if not restart:
-		#if calibrator:
-			#jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc_cwltool.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
-		#else:
-		jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc.sh '         + working_directory + ' ' + pipeline + ' ' + parset)
+	if calibrator:
+		walltime = '12:00:00'
+		jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc_cwltool.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
+	elif restart:
+		walltime = '24:00:00'
+		jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc_restart.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
 	else:
-		jobfile.write(    'sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc_restart.sh ' + working_directory + ' ' + pipeline + ' ' + parset)
+		walltime = '24:00:00'
+		jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_linc.sh '         + working_directory + ' ' + pipeline + ' ' + parset)
 	jobfile.close()
 	
 	os.system('chmod +x ' + submit_job)
@@ -347,6 +368,12 @@ def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_
 	cal_solutions   = None
 	ms              = None
 
+	slurm_list = glob.glob(slurm_files)
+	for slurm_file in slurm_list:
+		os.remove(slurm_file)
+		if not calibrator:
+			restart = True
+
 	## downloading LINC
 	if not restart:
 		filename = working_directory + '/LINC.tar'
@@ -355,7 +382,7 @@ def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_
 			logging.warning('Overwriting old LINC directory...')
 			shutil.rmtree(working_directory + '/linc', ignore_errors = True)
 
-		download = subprocess.Popen(['git', 'clone', '-b', branch, LINC, working_directory + '/linc'], stdout=subprocess.PIPE)
+		download = subprocess.Popen(['git', 'clone', LINC, working_directory + '/linc'], stdout=subprocess.PIPE)
 		errorcode = download.wait()
 		if errorcode != 0:
 			update_status(field_name, obsid, 'failed', 'observations')
@@ -363,14 +390,26 @@ def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_
 			logging.error('\033[31m Downloading LINC has failed.')
 			return True
 		os.chdir(working_directory + '/linc')
+		subprocess.Popen(['git', 'checkout', branch], stdout=subprocess.PIPE)
 		commit = os.popen('git show | grep commit | cut -f2- -d" "').readlines()[0].strip()
 
 		## create input JSON file
 		config = {}
 		msin = []
-		for ms in glob.glob(working_directory + '/*.MS'):
+		for ms in sorted(glob.glob(working_directory + '/*.MS')):
 			msin.append({"class": "Directory", "path": os.path.abspath(ms)})
 		config['msin'] = msin
+		config['max_dp3_threads'] = 10
+		config['make_structure_plot'] = make_structure_plot
+		config['min_unflagged_fraction'] = 0.05
+		selfcal, demix = find_demix_selfcal(obsid)
+		if not selfcal:
+			selfcal = any(item in obsid for item in special_fields)
+		if selfcal and not calibrator:
+			config['selfcal'] = True
+			config['gsmcal_step'] = 'scalarphase'
+		if calibrator or not demix:
+			config['demix'] = False
 		if not calibrator:
 			if os.path.exists(working_directory + '/results/cal_solutions.h5'):
 				cal_solutions = working_directory + '/results/cal_solutions.h5'
@@ -389,10 +428,6 @@ def run_linc(calibrator, field_name, obsid, working_directory, submitted, slurm_
 
 	logging.info('Creating submission script in \033[35m' + submit_job)
 	create_submission_script_linc(calibrator, submit_job, parset, cal_solutions, target_skymodel, working_directory, ms, submitted, restart)
-	
-	slurm_list = glob.glob(slurm_files)
-	for slurm_file in slurm_list:
-		os.remove(slurm_file)
 
 	logging.info('\033[0mWaiting for submission\033[0;5m...')
 	while os.path.exists(submit_job + '.sh'):
@@ -441,7 +476,6 @@ def create_submission_script(calibrator, submit_job, parset, working_directory, 
 		if '2003568' in obsid or '2003573' in obsid or '2005608' in obsid or '2005609' in obsid:
 			walltime = '06:00:00'
 
-	print(walltime)
 	## write-up of final command
 	jobfile.write('\n')
 	jobfile.write('sbatch --nodes=' + str(nodes) + ' --partition=batch --mail-user=' + mail + ' --mail-type=ALL --time=' + walltime + ' --account=htb00 ' + home_directory + '/run_pipeline.sh ' + parset + ' ' + working_directory)
@@ -579,12 +613,16 @@ def transfer_data(filename, transfer_fn, field_name, obsid):
 	existence = subprocess.Popen(['uberftp', '-ls', transfer_fn], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
+		if keep_existing_files:
+			logging.warning('Will keep existing file.')
+			return
 		subprocess.Popen(['uberftp','-rm', transfer_fn], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	transfer  = subprocess.Popen(['globus-url-copy', 'file:' + filename, transfer_fn], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = transfer.wait()
 	if errorcode == 0:
 		logging.info('File \033[35m' + filename + '\033[32m was transferred.')
 	else:
+		subprocess.Popen(['uberftp','-rm', transfer_fn], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 		logging.error('\033[31mTransfer of \033[35m' + filename + '\033[31m failed.')
 		update_status(field_name, obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
@@ -596,7 +634,7 @@ def download_data(url, obsid, field_name, working_directory):
 		logging.warning('Using wget for download!')
 		url = 'https://lta-download.lofar.psnc.pl/lofigrid/SRMFifoGet.py?surl=srm://lta-head.lofar.psnc.pl:8443/' + '/'.join(url.split('/')[3:])
 		logging.info('Downloading file: \033[35m' + filename)
-		download   = subprocess.Popen(['wget', '--no-check-certificate', url, '-O' + filename], stdout=subprocess.PIPE)
+		download   = subprocess.Popen(['wget', '--tries=3', '--no-check-certificate', url, '-O' + filename], stdout=subprocess.PIPE)
 	else:
 		logging.info('Downloading file: \033[35m' + filename)
 		download   = subprocess.Popen(['globus-url-copy',  url, 'file:' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
@@ -605,31 +643,35 @@ def download_data(url, obsid, field_name, working_directory):
 		unpack_data(filename, obsid, field_name, working_directory)
 	else:
 		logging.error('Download failed for: \033[35m' + str(url))
-		update_status(field_name, obsid, 'not_staged', 'observations')
-		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[33mnot_staged.')
+		update_status(field_name, obsid, 'not_staged', 'observations') ## DEBUG
+		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[33mnot_staged.') ## DEBUG
 
-def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_directory, error):
+def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_directory):
 
 	logging.info('Retrieving SRM file for: \033[35mL' + obsid)
 	srm_file = srm_dir + '/srm' + obsid + '.txt'
 	existence = subprocess.Popen(['uberftp', '-ls', srm_file], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
+	filename = working_directory + '/' + os.path.basename(srm_file)
 	if errorcode == 0:
 		logging.info('Transferring SRM file from: \033[35m' + srm_file)
 	else:
 		logging.error('Could not find SRM file for: \033[35m' + srm_file)
-		update_status(field_name, target_obsid, 'failed', 'observations')
-		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
-		return ([], True)
+		if is_running(filename):
+			logging.warning('Using existing SRM file: \033[35m' + filename)
+		else:
+			update_status(field_name, target_obsid, 'failed', 'observations')
+			logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
+			return ([], False)
 
-	filename = working_directory + '/' + os.path.basename(srm_file)
-	transfer  = subprocess.Popen(['globus-url-copy', srm_file, 'file://' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
-	errorcode = transfer.wait()
-	if errorcode != 0:
+	if errorcode == 0:
+		transfer  = subprocess.Popen(['globus-url-copy', srm_file, 'file://' + filename], stdout=subprocess.PIPE, env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
+		errorcode = transfer.wait()
+	if errorcode != 0 and not is_running(filename):
 		logging.error('\033[31mDownloading SRM file has failed.')
 		update_status(field_name, target_obsid, 'failed', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
-		return ([], True)
+		return ([], False)
 
 	srm_list = []
 	srm      = open(filename, 'r').readlines()
@@ -661,27 +703,32 @@ def prepare_downloads(obsid, field_name, target_obsid, srm_dir, working_director
 	if not staged:
 		update_status(field_name, target_obsid, 'not_staged', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[33mnot_staged.')
-		error = True
 
-	return (download_list, error)
+	return download_list, staged
 
 def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working_directory, submitted):
 
 	logging.info('Checking calibrator observation: \033[35mL' + cal_obsid)
-	cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
+	cal_solution = cal_results_dir + '/Spider/' + cal_prefix + 'L' + cal_obsid + '.tar'
 	existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 	errorcode = existence.wait()
 	if errorcode == 0:
 		logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 	else:
-		cal_solution = cal_results_dir + '/Spider/' + cal_prefix + 'L' + cal_obsid + '.tar'
+		cal_solution = cal_results_dir + '/Spider/' + cal_prefix_linc + 'L' + cal_obsid + '.tar'
 		existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
 		errorcode = existence.wait()
 		if errorcode == 0:
 			logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
 		else:
-			logging.warning('Could not find any calibrator results for this field in: \033[35m' + cal_solution)
-			return (True, False)
+			cal_solution = cal_results_dir + '/L' + cal_obsid + '/' + cal_prefix + 'L' + cal_obsid + '.tar'
+			existence = subprocess.Popen(['uberftp', '-ls', cal_solution], env = {'GLOBUS_GSSAPI_MAX_TLS_PROTOCOL' : 'TLS1_2_VERSION'})
+			errorcode = existence.wait()
+			if errorcode == 0:
+				logging.info('Found calibrator results for this field from: \033[35m' + cal_solution)
+			else:
+				logging.warning('Could not find any calibrator results for this field in: \033[35m' + cal_solution)
+				return (True, False)
 
 	if os.path.isfile(submitted):
 		return (False, False)
@@ -705,12 +752,16 @@ def get_calibrator(cal_obsid, field_name, target_obsid, cal_results_dir, working
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 		return (False, True)
 
+	if os.path.exists(working_directory + '/L' + cal_obsid):
+		if os.path.exists(working_directory + '/results'):
+			shutil.rmtree(working_directory + '/results')
+		shutil.move(working_directory + '/L' + cal_obsid, working_directory + '/results')
 	os.remove(filename)
 	logging.info('File \033[35m' + filename + '\033[32m was removed.')
 
 	return (False, False)
 
-def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp', process_id = 0, parallel = False):
+def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp', process_id = 0, parallel = run_in_parallel):
 
 	## load working environment
 	working_directory = os.environ['SCRATCH_chtb00'] + '/htb006'
@@ -719,7 +770,8 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	last_observation  = working_directory + '/.observation_' + str(process_id)
 	lock              = working_directory + '/.lock'
 	logging.info('\033[0mWorking directory is ' + working_directory)
-    
+	logging.info('\033[0mThis is process ID ' + str(process_id))
+
 	## removing existing lock file
 	if is_running(lock):
 		os.remove(lock)
@@ -729,17 +781,26 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	username = open(server_config).readlines()[1].rstrip()
 	logging.info('Username: \033[35m' + username)
 	logging.info('Database: \033[35m' + database)
-	observation      = 1
+	observation = 1
 
 	### check latest observation
 	if is_running(last_observation):
 		observation  = open(last_observation).readline().rstrip()
-		field_name   = observation.split('_')[0]
+		field_name   = '_'.join(observation.split('_')[0:-1])
 		target_obsid = observation.split('_')[-1].lstrip('L')
 
 	### check for new observations if necessary
 	while not is_running(last_observation) and observation == 1:
 		logging.info('Looking for a new observation.')
+		last_observations = glob.glob(working_directory + '/.observation_*')
+		if len(last_observations) >= max_number_of_fields:
+			logging.warning('\033[0mMore than ' + str(max_number_of_fields) + ' fields are currently being processed. Waiting for fields to finish \033[0;5m...')
+			time.sleep(3600)
+			continue
+		observations = []
+		for last_obs in last_observations:
+			f = open(last_obs, 'r').readlines()[0]
+			observations.append(f.split('_')[0])
 		try:
 			nextfield = get_next_pref(status = 'READY', location = database)
 		except TypeError:
@@ -749,10 +810,12 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				logging.info('\033[0mNo tokens in database found to be processed.')
 				logging.info('Checking for observations in the working directory to be resumed.')
 				working_directories = [ f.path for f in os.scandir(working_directory) if f.is_dir() ]
-				for working_directory in working_directories:
-					field_id   = working_directory.rstrip('/').split('/')[-1]
+				for directory in working_directories:
+					field_id   = directory.rstrip('/').split('/')[-1]
 					try:
 						field_name = field_id.split('_')[0]
+						if field_name in observations:
+							continue
 						obsid      = field_id.split('_')[1].lstrip('L')
 						update_status(field_name, obsid, 'READY', 'observations')
 						logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: READY')
@@ -760,7 +823,7 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 						continue
 				if working_directories == []:
 					logging.info('\033[0mNo observations could be found. If database is not empty please check it for new or false tokens manually.')
-					time.sleep(300)
+				time.sleep(3600)
 				continue
 		target_obsid = str(nextfield['target_OBSID'])
 		field_name   = nextfield['field_name']
@@ -797,9 +860,6 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	slurm_files = working_directory + '/slurm-*.out'
 	while is_running(submitted): 
 		logging.info('\033[0mA pipeline has already been submitted.')
-		if parallel: 
-			write_file(lock, str(random.randint(0, 1e5)))
-			parallel = False
 		slurm_list = glob.glob(slurm_files)
 		while len(slurm_list) > 0 and error == False:
 			slurm_log = slurm_list[-1]
@@ -809,22 +869,25 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 				log_information = check_submitted_job_linc(slurm_log, submitted).replace('\033[32m','').replace('\033[0m','')
 			else:
 				log_information = check_submitted_job(slurm_log, submitted).replace('\033[32m','').replace('\033[0m','')
-			if log_information == 'failed':
+			if log_information == 'failed' or (log_information == 'timeout' and calibrator):
 				logging.error('Processing of pipeline has been failed. See errorlog for details.')
 				update_status(field_name, target_obsid, 'failed', 'observations')
 				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[31mfailed.')
 				error = True
 				os.remove(submitted)
-			elif log_information == 'processing':
-				logging.info('Pipeline is currently processing.')
-				update_status(field_name, target_obsid, 'processing', 'observations')
-				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mprocessing.')
-				time.sleep(60)
 			elif log_information == 'timeout':
 				logging.warning('Pipeline processing has encountered walltime limit.')
 				logging.info('LINC pipeline will be restarted.')
 				run_linc(calibrator, field_name, target_obsid, working_directory, submitted, slurm_files, restart = True)
 				break
+			elif log_information == 'processing':
+				logging.info('Pipeline is currently processing.')
+				update_status(field_name, target_obsid, 'processing', 'observations')
+				logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mprocessing.')
+				if parallel: 
+					write_file(lock, str(random.randint(0, 1e5)))
+					parallel = False
+				time.sleep(60)
 			else:
 				logging.info('Pipeline has finished successfully.')
 				if linc:
@@ -835,15 +898,15 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 					logging.info('Cleaning working directory.')
 					shutil.rmtree(working_directory, ignore_errors = True)
 				os.remove(last_observation)
-				if int(process_id) == 0:
-					write_file(lock, str(process_id))
+				#if int(process_id) == 0:
+					#write_file(lock, str(process_id))
 				return
 		time.sleep(60)
 
 	### download data
-	(download_list, error) = prepare_downloads(obsid, field_name, target_obsid, ftp + '/' + srm_subdir, working_directory, error)
-	pool                   = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 2))
-	if not error and len(download_list) != 0:
+	(download_list, staged) = prepare_downloads(obsid, field_name, target_obsid, ftp + '/' + srm_subdir, working_directory)
+	pool                   = multiprocessing.Pool(processes = int(multiprocessing.cpu_count() / 4))
+	if not (error or not staged) and len(download_list) != 0 and (field['status'] == 'READY' or field['status'] == 'not_staged'):
 		update_status(field_name, target_obsid, 'downloading', 'observations')
 		logging.info('Status of \033[35m' + field_name + '\033[32m has been set to: \033[35mdownloading.')
 	for url in download_list:
@@ -855,8 +918,10 @@ def main(server = 'localhost:3306', database = 'Juelich', ftp = 'gsiftp://gridft
 	field = get_one_observation(field_name, target_obsid)
 	if field['status'] == 'failed' or field['status'] == 'not_staged' or error:
 		logging.error('Could not proceed with \033[35m' + field_name +'\033[31m. Please check database or logfiles for any errors.')
-		os.remove(last_observation)
-		if int(process_id) == 0 or field['status'] == 'not_staged':
+		if not error:
+			os.remove(last_observation)
+		#if int(process_id) == 0 or field['status'] == 'not_staged' or not error:
+		if field['status'] == 'not_staged' or not error:
 			write_file(lock, str(process_id))
 		return
 

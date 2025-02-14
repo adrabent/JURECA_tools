@@ -7,7 +7,7 @@ PROXY=$PROJECT/launch_proxy.sh
 LOCK=$SCRATCH/.lock
 
 $PROXY &&
-$SCRIPT &
+#$SCRIPT 0 &
 
 while [ 1 ]
 do
@@ -15,5 +15,5 @@ do
 		ID=`(more $LOCK)`
 		$SCRIPT --id $ID &
 	fi
-	sleep 60s
+	sleep 300s
 done

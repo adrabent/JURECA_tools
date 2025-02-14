@@ -2,7 +2,7 @@
 
 module use /gpfs/software/juwels/otherstages
 
-. $PROJECT_chtb00/htb006/env_lofar_4.0_juwels.sh
+. $PROJECT_chtb00/htb006/env_lofar_4.1_juwels.sh
 
 SCRIPT=$SCRATCH_chtb00/htb006/submit_job.sh
 

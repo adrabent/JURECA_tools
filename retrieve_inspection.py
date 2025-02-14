@@ -1,4 +1,4 @@
-#!/p/project/chtb00/htb006/software_new/envs/surveys/bin/python3
+#!/p/project1/chtb00/htb006/software_new/envs/surveys/bin/python3
 # -*- coding: utf-8 -*-
 
 """
@@ -13,8 +13,9 @@ from surveys_utils import *
 
 _version   = '1.0' ## program version
 cal_dir    = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/diskonly/pipelines/SKSP/prefactor_v3.0/pref_cal'
-targ_dir   = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/archive/SKSP_Spider_Pref3'
-cal_prefix = 'pref3_cal_'  
+targ_dir   = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/archive/SKSP_Spider_LINC'
+#targ_dir   = 'gsiftp://gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lofar/user/sksp/archive/SKSP_Spider_Pref3'
+cal_prefix = 'linc_cal_'  
 
 def add_coloring_to_emit_ansi(fn):
 

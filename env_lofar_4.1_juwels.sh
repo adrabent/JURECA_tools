@@ -1,12 +1,11 @@
 ## installation settings
-module use /gpfs/software/juwels/otherstages
-export STAGE=Devel-2020
+export STAGE=2024
 
 ## load JUWELS environment
 module load Stages/${STAGE}
 
-module load GCCcore/.9.3.0
-module load nodejs
+module load GCCcore/.12.3.0
+module load nodejs/.18.17.1
 
 ## load software environment
 export PROJECT=${PROJECT_chtb00}/htb006
@@ -45,11 +44,10 @@ linc () {
     export INPUT_JSON=$3
 #     export TMPDIR=${WORKDIR}
     mkdir -pv ${OUTDIR} ${WORKDIR}  ${LOGDIR}
-    toil --version
+#     toil --version
 #     toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --tmpdir-prefix ${WORKDIR}/tmp- --outdir ${OUTDIR} --log-dir ${LOGDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${SOFTWARE}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
 #     toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --log-dir ${LOGDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${SOFTWARE}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
     toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${LINC}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
-    echo toil ${CWL_OPTIONS} --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${LINC}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
 }
 
 linc_restart () {
@@ -60,9 +58,7 @@ linc_restart () {
     export PIPELINE=$2
     export INPUT_JSON=$3
     mkdir -pv ${OUTDIR} ${WORKDIR}  ${LOGDIR}
-    toil --version
     toil ${CWL_OPTIONS} --restart --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${LINC}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
-    echo toil ${CWL_OPTIONS} --restart --tmp-outdir-prefix ${WORKDIR}/cwl- --outdir ${OUTDIR} --workDir ${WORKDIR} --writeLogs ${LOGDIR} --jobStore ${WORKDIR}/jobStore ${LINC}/workflows/${PIPELINE}.cwl ${INPUT_JSON}
 }
 
 linc_restart_trunk () {

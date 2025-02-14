@@ -1,4 +1,4 @@
-#!/p/project/chtb00/htb006/software_new/envs/surveys/bin/python3
+#!/p/project1/chtb00/htb006/software_new/envs/surveys/bin/python3
 # -*- coding: utf-8 -*-
 
 """
@@ -48,8 +48,8 @@ def main(working_directory = None, server = 'localhost:3306', database = 'Juelic
 
 	#os.remove(working_directory + '/.submitted')
 	field_id   = working_directory.rstrip('/').split('/')[-1]
-	field_name = field_id.split('_')[0]
-	obsid      = field_id.split('_')[1].lstrip('L')
+	field_name = '_'.join(field_id.split('_')[:-1])
+	obsid      = field_id.split('_')[-1].lstrip('L')
 
 	if status:
 		update_status(field_name, obsid, status, 'observations')

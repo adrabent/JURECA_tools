@@ -21,7 +21,7 @@ do
 	
 	if [[ "$(voms-proxy-info  --all | grep timeleft | tail -1 | cut -f2 -d: | sed 's/ //g')" = "00" ]]
         then
-            /p/project/chtb00/htb006/launch_proxy.sh
+            /p/project1/chtb00/htb006/launch_proxy.sh
     fi
     
 	sleep $timeout_java
